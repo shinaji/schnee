@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: nox
+        name: Run Nox
+        entry: uv run nox -s lint type_check --
+        language: system
+        types: [python]
+        pass_filenames: true
