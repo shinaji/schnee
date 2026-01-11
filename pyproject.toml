@@ -62,8 +62,8 @@ ignore = [
     "D101",
     "D104",
     "D107",
-    "D203",
-    "D212",
+    "D204",
+    "D213",
     "D400",
     "D415",
     "T201"
@@ -73,6 +73,9 @@ unfixable = [
     "F841",
     "T201",
 ]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
