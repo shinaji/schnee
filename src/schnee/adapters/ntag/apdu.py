@@ -111,12 +111,12 @@ class CommandAPDU(BaseModel):
             return out
 
         if self.case == "case2":
-            return [*out, 0x00, *self._encode_u16_le_field(self.le)]
+            return [*out, 0x00, *self._encode_u16_be_field(self.le)]
 
-        out += [0x00, *self._encode_u16_le_field(len(self.data)), *self.data]
+        out += [0x00, *self._encode_u16_be_field(len(self.data)), *self.data]
 
         if self.case == "case4":
-            out += self._encode_u16_le_field(self.le)
+            out += self._encode_u16_be_field(self.le)
 
         return out
 
@@ -129,7 +129,7 @@ class CommandAPDU(BaseModel):
         return 0x00 if le in (0, 256) else le
 
     @classmethod
-    def _encode_u16_le_field(cls, value: int | None) -> list[int]:
+    def _encode_u16_be_field(cls, value: int | None) -> list[int]:
         """Encode a 16-bit APDU length field in big-endian byte order."""
         if value is None:
             msg = "length value must be set"
