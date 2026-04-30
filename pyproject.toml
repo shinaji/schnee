@@ -59,7 +59,6 @@ target-version = "py314"
 select = ["ALL"]
 ignore = [
     "D100",
-    "D101",
     "D104",
     "D107",
     "D204",
@@ -79,6 +78,7 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
+"tests/**/*.py" = ["S101"]
 
 
 [tool.ruff.lint.isort]
