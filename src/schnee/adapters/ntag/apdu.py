@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, model_validator
 
 BYTE_MAX = 0xFF
 SHORT_LE_MAX = 0x100
+EXTENDED_LENGTH_MAX = 0x10000
 Byte = Annotated[int, Field(ge=0, le=0xFF)]
 APDUCaseType = Literal["case1", "case2", "case3", "case4"]
 
@@ -36,6 +37,9 @@ class CommandAPDU(BaseModel):
     class ShortLeLengthExceededError(CommandAPDUError):
         """Raised when short APDU Le exceeds the maximum supported length."""
 
+    class ExtendedDataLengthExceededError(CommandAPDUError):
+        """Raised when extended APDU data exceeds the maximum supported length."""
+
     class MissingLeError(CommandAPDUError):
         """Raised when Le is required for encoding but not set."""
 
@@ -48,6 +52,10 @@ class CommandAPDU(BaseModel):
         if not self.extended and len(self.data) > BYTE_MAX:
             msg = "short APDU data length must be <= 255"
             raise self.ShortDataLengthExceededError(msg)
+
+        if self.extended and len(self.data) > EXTENDED_LENGTH_MAX:
+            msg = "extended APDU data length must be <= 65536"
+            raise self.ExtendedDataLengthExceededError(msg)
 
         if not self.extended and self.le is not None and self.le > SHORT_LE_MAX:
             msg = "short APDU Le must be <= 256"
