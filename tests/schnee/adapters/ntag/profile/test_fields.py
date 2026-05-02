@@ -19,6 +19,7 @@ def test_build_editable_fields_marks_key_field_dangerous() -> None:
     assert fields[0].path == "ndef.records[0].value"
     assert fields[0].value == "https://example.com"
     assert fields[0].kind == "url"
+    assert fields[0].requires_auth is True
     assert fields[-1].path == "security.keys"
     assert fields[-1].dangerous is True
     assert fields[-1].requires_auth is True

@@ -60,6 +60,7 @@ def build_editable_fields(profile: TagProfile) -> list[EditableField]:
             value=ndef_value,
             writable=not profile.locks.permanent,
             required=True,
+            requires_auth=profile.access.ndef_write == "authenticated",
         ),
         EditableField(
             path="sdm.enabled",
