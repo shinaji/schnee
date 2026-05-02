@@ -99,6 +99,10 @@ def plan_profile_changes(current: TagProfile, requested: TagProfile) -> ChangePl
                 path="ndef",
                 description="Update NDEF records",
                 risk="safe",
+                requires_authentication=(
+                    current.access.ndef_write == "authenticated"
+                    or requested.access.ndef_write == "authenticated"
+                ),
                 before=current.ndef,
                 after=requested.ndef,
             ),
