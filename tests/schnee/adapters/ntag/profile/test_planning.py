@@ -74,6 +74,7 @@ def test_plan_profile_changes_blocks_ndef_updates_on_locked_tag() -> None:
     assert plan.errors == [
         "NDEF cannot be changed after the tag is permanently locked",
     ]
+    assert plan.operations == []
 
 
 def test_plan_profile_changes_marks_ndef_write_auth_requirement() -> None:

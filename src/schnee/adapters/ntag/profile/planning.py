@@ -89,10 +89,11 @@ def plan_profile_changes(current: TagProfile, requested: TagProfile) -> ChangePl
     if current.tag.type != requested.tag.type:
         errors.append("tag type cannot be changed")
 
-    if current.locks.permanent and current.ndef != requested.ndef:
+    ndef_change_blocked = current.locks.permanent and current.ndef != requested.ndef
+    if ndef_change_blocked:
         errors.append("NDEF cannot be changed after the tag is permanently locked")
 
-    if current.ndef != requested.ndef:
+    if current.ndef != requested.ndef and not ndef_change_blocked:
         operations.append(
             ChangeOperation(
                 type="writeNdef",
