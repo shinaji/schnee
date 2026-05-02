@@ -106,9 +106,10 @@ def build_editable_fields(profile: TagProfile) -> list[EditableField]:
             requires_auth=True,
         ),
         EditableField(
-            path="security.keys",
-            label="Application Keys",
-            kind="secret",
+            path="security.default_keys",
+            label="Default Keys",
+            kind="boolean",
+            value=profile.security.default_keys,
             writable=not profile.locks.permanent,
             requires_auth=True,
             dangerous=True,
