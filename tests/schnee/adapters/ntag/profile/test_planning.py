@@ -1,10 +1,13 @@
 """Tests for NTAG profile change planning."""
 
 from schnee.adapters.ntag.profile.models import (
+    AccessProfile,
     LockProfile,
     NdefProfile,
     NdefRecord,
     SdmProfile,
+    SecurityProfile,
+    TagInfo,
     TagProfile,
 )
 from schnee.adapters.ntag.profile.planning import plan_profile_changes
@@ -100,3 +103,51 @@ def test_plan_profile_changes_marks_ndef_write_auth_requirement() -> None:
     assert plan.operations[0].type == "writeNdef"
     assert plan.operations[0].requires_authentication is True
     assert plan.requires_authentication is True
+
+
+def test_plan_profile_changes_detects_access_updates() -> None:
+    """Access updates are dangerous authenticated operations."""
+    current = TagProfile()
+    requested = current.patch(
+        access=AccessProfile(ndef_write="free"),
+    )
+
+    plan = plan_profile_changes(current, requested)
+
+    assert plan.valid is True
+    assert [operation.type for operation in plan.operations] == ["updateAccess"]
+    assert plan.operations[0].risk == "dangerous"
+    assert plan.operations[0].requires_authentication is True
+    assert plan.has_dangerous_operations is True
+
+
+def test_plan_profile_changes_detects_key_rotation() -> None:
+    """Key rotation is planned as dangerous and warns callers."""
+    current = TagProfile()
+    requested = current.patch(
+        security=SecurityProfile(default_keys=False),
+    )
+
+    plan = plan_profile_changes(current, requested)
+
+    assert plan.valid is True
+    assert [operation.type for operation in plan.operations] == ["rotateKey"]
+    assert plan.operations[0].risk == "dangerous"
+    assert plan.operations[0].requires_authentication is True
+    assert plan.has_dangerous_operations is True
+    assert plan.warnings == [
+        "Key rotation can make the tag inaccessible if keys are lost.",
+    ]
+
+
+def test_plan_profile_changes_rejects_tag_type_changes() -> None:
+    """Tag type changes are rejected."""
+    current = TagProfile()
+    requested = current.patch(
+        tag=TagInfo.model_construct(type="MIFARE"),
+    )
+
+    plan = plan_profile_changes(current, requested)
+
+    assert plan.valid is False
+    assert plan.errors == ["tag type cannot be changed"]
