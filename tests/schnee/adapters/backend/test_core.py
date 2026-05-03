@@ -40,6 +40,15 @@ def test_backend_names_returns_pcsc_backend_names(
     assert Backend.backend_names() == ["pcsc", "pcsc:Reader A"]
 
 
+def test_backend_names_hides_pcsc_when_no_readers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Backend selector does not advertise unavailable PC/SC backends."""
+    monkeypatch.setattr(PcscReaderProvider, "reader_names", list)
+
+    assert Backend.backend_names() == []
+
+
 def test_backend_get_returns_default_pcsc_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -21,8 +21,10 @@ class Backend:
     def backend_names(cls) -> list[str]:
         """Get all backend names."""
         _ = cls
-        names = ["pcsc"]
-        names.extend(f"pcsc:{name}" for name in PcscBackend.pcsc_backend_names())
+        pcsc_names = PcscBackend.pcsc_backend_names()
+        names = [f"pcsc:{name}" for name in pcsc_names]
+        if pcsc_names:
+            names.append("pcsc")
         return sorted(names)
 
     @classmethod
