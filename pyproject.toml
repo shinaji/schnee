@@ -88,7 +88,7 @@ known-third-party = []
 root = ["src"]
 
 [tool.ty.src]
-include = ["src/ntag424dna", "tests"]
+include = ["src/schnee", "tests"]
 
 
 [tool.pytest.ini_options]
