@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import pytest
 
 from schnee.adapters.backend import PcscBackend
 from schnee.adapters.backend.pcsc import PcscReaderProvider
 from schnee.adapters.ntag.apdu import CommandAPDU
-
-if TYPE_CHECKING:
-    import pytest
 
 
 class FakeConnection:
@@ -44,17 +41,25 @@ class FakeReader:
         return self.connection
 
 
-def test_pcsc_backend_wraps_reader_and_reads_profile_uid() -> None:
-    """PC/SC backend reads a profile through the wrapped reader."""
+def test_pcsc_backend_reads_tag_info_uid() -> None:
+    """PC/SC backend reads tag identity through the wrapped reader."""
     reader = FakeReader()
     backend = PcscBackend(reader=reader)
 
-    profile = backend.read_profile()
+    tag = backend.read_tag_info()
 
     assert backend.reader_name == "Fake PCSC Reader"
-    assert profile.tag.uid == "04112233445566"
-    assert profile.tag.features == ["pcsc"]
+    assert tag.uid == "04112233445566"
+    assert tag.features == ["pcsc"]
     assert reader.connection.commands == [[0xFF, 0xCA, 0x00, 0x00, 0x00]]
+
+
+def test_pcsc_backend_rejects_full_profile_reads() -> None:
+    """PC/SC backend does not fabricate full profile data from UID-only reads."""
+    backend = PcscBackend(reader=FakeReader())
+
+    with pytest.raises(PcscBackend.UnsupportedProfileReadError):
+        backend.read_profile()
 
 
 def test_pcsc_backend_sends_command_apdu() -> None:

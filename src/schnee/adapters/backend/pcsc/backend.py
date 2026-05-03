@@ -20,6 +20,9 @@ class PcscBackend:
     class UnsupportedPlanError(PcscBackendError):
         """Raised when a write plan is not implemented by the PC/SC backend."""
 
+    class UnsupportedProfileReadError(PcscBackendError):
+        """Raised when full profile reads are not implemented."""
+
     def __init__(self, reader: PcscReader) -> None:
         self.reader = reader
         self.client = PcscApduClient(reader)
@@ -38,13 +41,16 @@ class PcscBackend:
         return self.client.send_apdu(apdu)
 
     def read_profile(self) -> TagProfile:
-        """Read the currently reachable NTAG profile summary."""
+        """Read the currently reachable NTAG profile."""
+        msg = "PC/SC full profile reads are not implemented yet"
+        raise self.UnsupportedProfileReadError(msg)
+
+    def read_tag_info(self) -> TagInfo:
+        """Read the currently reachable NTAG tag identity summary."""
         uid = self._read_uid()
-        return TagProfile(
-            tag=TagInfo(
-                uid=uid,
-                features=["pcsc"],
-            ),
+        return TagInfo(
+            uid=uid,
+            features=["pcsc"],
         )
 
     def apply_plan(self, plan: ChangePlan) -> TagProfile:
