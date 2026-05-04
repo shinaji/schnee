@@ -1,12 +1,18 @@
 import binascii
+from enum import IntEnum
+from typing import TYPE_CHECKING
 
 from Crypto.Cipher import AES
 from Crypto.Hash import CMAC
 from Crypto.Random import get_random_bytes
 from Crypto.Util.Padding import pad
+from pydantic import BaseModel, ConfigDict, Field
+from smartcard.Exceptions import CardConnectionException
 from smartcard.util import toHexString
 
-from schnee.adapters.backend.pcsc import PcscApduClient, PcscReaderProvider
+from schnee.adapters.backend.core import Backend
+from schnee.adapters.backend.pcsc import PcscApduClient, PcscBackend
+from schnee.adapters.ntag.apdu import Ntag424ApduPreset
 from schnee.adapters.ntag.crypt import aes_decrypt, aes_encrypt, xor_bytes
 from schnee.adapters.ntag.utils import (
     Offset,
@@ -16,7 +22,23 @@ from schnee.adapters.ntag.utils import (
 )
 from schnee.utils.logger import get_logger
 
+if TYPE_CHECKING:
+    from schnee.adapters.backend.contracts import ProfileReaderBackend
+
 _logger = get_logger(__name__)
+
+KEY_VERSION_MAX = 0xFF
+COMMAND_COUNTER_MAX = 0xFFFF
+
+
+class Ntag424Key(IntEnum):
+    """NTAG 424 DNA application key numbers."""
+
+    APP_MASTER = 0x00
+    APP_KEY_1 = 0x01
+    APP_KEY_2 = 0x02
+    APP_KEY_3 = 0x03
+    APP_KEY_4 = 0x04
 
 
 class Session:
@@ -25,9 +47,12 @@ class Session:
     class SessionError(Exception):
         """Session error"""
 
+    class AuthenticationError(SessionError):
+        """Raised when EV2 authentication response verification fails."""
+
     def __init__(
         self,
-        connection: PcscApduClient,
+        connection: ProfileReaderBackend,
         key_no: int = 0x00,
         master_key: bytes | None = None,
     ) -> None:
@@ -48,9 +73,12 @@ class Session:
         return self._authenticate_ev2_first()
 
     def _authenticate_ev2_first(self) -> tuple[bytes, bytes, bytes, bytes]:
-        cmd_auth_1 = [0x90, 0x71, 0x00, 0x00, 0x02, self.key_no, 0x00, 0x00]
         _logger.debug("AuthEv2First (Get RndB)")
-        encrypted_rnd_b = bytes(self.connection.send_checked(cmd_auth_1))
+        encrypted_rnd_b = bytes(
+            self.connection.send_apdu(
+                Ntag424ApduPreset.authenticate_ev2_first(self.key_no),
+            ).data,
+        )
 
         # タグから戻ってきた暗号化されたRndB (末尾の90 00ステータスを除く)
         # resp_1 は Enc(RndB)
@@ -74,17 +102,9 @@ class Session:
         # 6. Part 2: コマンド送信 (Send RndA + RndB')
         # 90 AF 00 00 (Len) (EncData) 00
         resp_2 = bytes(
-            self.connection.send_checked(
-                [
-                    0x90,
-                    0xAF,
-                    0x00,
-                    0x00,
-                    len(encrypted_payload),
-                    *list(encrypted_payload),
-                    0x00,
-                ],
-            ),
+            self.connection.send_apdu(
+                Ntag424ApduPreset.additional_frame(list(encrypted_payload)),
+            ).data,
         )
         return self._verify_and_derive_keys(
             rnd_a=rnd_a,
@@ -127,7 +147,7 @@ class Session:
 
         if rnd_a_prime_received != rnd_a_prime_expected:
             msg = "Authentication Failed: RndA mismatch! (Tag might be fake)"
-            raise RuntimeError(msg)
+            raise self.AuthenticationError(msg)
 
         # 3. セッションキーの生成 (KDF: Key Derivation Function)
         # NTAG 424 DNA (EV2) 固有の「共有ベクトル(SV)」を作成します
@@ -154,19 +174,128 @@ class Session:
         return session_key_enc, session_key_mac, ti, iv
 
 
+APDU_VALIDATION_ERRORS = (
+    CardConnectionException,
+    PcscApduClient.PcscApduClientError,
+    PcscBackend.PcscBackendError,
+    Session.AuthenticationError,
+)
+
+
 class Ntag424:
     """High-level helper for configuring NTAG 424 DNA tags."""
 
+    FACTORY_DEFAULT_KEY = bytes(16)
+    key_slots = 5
+    aes_key_size = 16
+    ti_size = 4
+    byte_max = KEY_VERSION_MAX
+    change_key_cmd = 0xC4
+
+    class KeyUpdate(BaseModel):
+        """One NTAG 424 DNA application-key update."""
+
+        model_config = ConfigDict(frozen=True)
+
+        key_no: Ntag424Key = Field(
+            description="Application key number to update.",
+        )
+        new_key: bytes = Field(
+            description="New AES-128 key bytes to write into the selected key slot.",
+        )
+        key_version: int = Field(
+            default=0,
+            ge=0,
+            le=KEY_VERSION_MAX,
+            description="New one-byte key version stored with the key.",
+        )
+        old_key: bytes | None = Field(
+            default=None,
+            description=(
+                "Current AES-128 key bytes. Required for key 1..4 ChangeKey "
+                "cryptograms; use Ntag424.FACTORY_DEFAULT_KEY for factory-default "
+                "app keys."
+            ),
+        )
+
+    class KeyValidation(BaseModel):
+        """One NTAG 424 DNA application-key validation."""
+
+        model_config = ConfigDict(frozen=True)
+
+        key_no: Ntag424Key = Field(
+            description="Application key number to validate.",
+        )
+        key: bytes = Field(
+            description="Expected AES-128 key bytes for the selected key slot.",
+        )
+        key_version: int | None = Field(
+            default=None,
+            ge=0,
+            le=KEY_VERSION_MAX,
+            description="Optional expected one-byte key version stored with the key.",
+        )
+
+    class KeyValidationResult(BaseModel):
+        """Result for one NTAG 424 DNA application-key validation."""
+
+        model_config = ConfigDict(frozen=True)
+
+        key_no: Ntag424Key = Field(
+            description="Application key number that was checked.",
+        )
+        valid: bool = Field(description="Whether all requested checks passed.")
+        authenticated: bool = Field(
+            description="Whether AuthenticateEV2First succeeded with the expected key.",
+        )
+        expected_key_version: int | None = Field(
+            default=None,
+            description="Expected key version requested by the caller.",
+        )
+        actual_key_version: int | None = Field(
+            default=None,
+            description="Key version returned by GetKeyVersion.",
+        )
+        key_version_matches: bool | None = Field(
+            default=None,
+            description="Whether actual_key_version equals expected_key_version.",
+        )
+        error: str | None = Field(
+            default=None,
+            description="Validation error details when a check fails.",
+        )
+
+    class Ntag424Error(Exception):
+        """Base exception for NTAG 424 helper errors."""
+
+    class InvalidKeyNumberError(Ntag424Error):
+        """Raised when a key number is outside the NTAG 424 key range."""
+
+    class InvalidKeyLengthError(Ntag424Error):
+        """Raised when an AES key is not 16 bytes."""
+
+    class InvalidKeyVersionError(Ntag424Error):
+        """Raised when a key version is outside one byte."""
+
+    class MissingOldKeyError(Ntag424Error):
+        """Raised when a non-master key update does not include the old key."""
+
+    class UnsupportedBackendError(Ntag424Error):
+        """Raised when a backend cannot provide raw NTAG 424 APDU access."""
+
     def __init__(
         self,
-        name: str,
+        backend_name: str,
         master_key: bytes | None = None,
     ) -> None:
         if master_key is None:
             msg = "master_key must be provided explicitly"
             raise ValueError(msg)
-        self.reader = PcscReaderProvider.get(name)
-        self.connection = PcscApduClient(reader=self.reader)
+        self.backend = Backend.get(backend_name)
+        if not isinstance(self.backend, PcscBackend):
+            msg = "Ntag424 requires a PC/SC backend"
+            raise self.UnsupportedBackendError(msg)
+        self.connection = self.backend
         self.session = Session(
             connection=self.connection,
             key_no=0x00,
@@ -180,6 +309,230 @@ class Ntag424:
     def authenticate(self) -> tuple[bytes, bytes, bytes, bytes]:
         """Authenticate and return derived EV2 session values."""
         return self.session.authenticate_ev2_first()
+
+    def update_keys(
+        self,
+        updates: list[KeyUpdate],
+        *,
+        cmd_ctr_start: int = 0,
+    ) -> None:
+        """Authenticate with key 0 and update NTAG 424 DNA application keys.
+
+        Non-master keys are changed before key 0 because changing key 0 invalidates
+        the current authenticated session.
+        """
+        self.connect()
+        k_ses_auth_enc, k_ses_auth_mac, ti, _iv = self.authenticate()
+
+        cmd_ctr = cmd_ctr_start
+        for update in sorted(
+            updates,
+            key=lambda item: item.key_no is Ntag424Key.APP_MASTER,
+        ):
+            apdu = self.build_change_key_apdu(
+                update=update,
+                session_key_enc=k_ses_auth_enc,
+                session_key_mac=k_ses_auth_mac,
+                ti=ti,
+                cmd_ctr=cmd_ctr,
+            )
+            _logger.debug(
+                "ChangeKey key_no=%s: %s",
+                int(update.key_no),
+                toHexString(apdu),
+            )
+            self.connection.send_apdu(apdu)
+            cmd_ctr += 1
+
+    @classmethod
+    def validate_keys(
+        cls,
+        *,
+        backend_name: str,
+        keys: list[KeyValidation],
+    ) -> list[KeyValidationResult]:
+        """Validate NTAG 424 DNA keys by authenticating with each expected key."""
+        backend = Backend.get(backend_name)
+        if not isinstance(backend, PcscBackend):
+            msg = "Ntag424 requires a PC/SC backend"
+            raise cls.UnsupportedBackendError(msg)
+
+        return [cls._validate_key(backend=backend, expected=key) for key in keys]
+
+    @classmethod
+    def _validate_key(
+        cls,
+        *,
+        backend: ProfileReaderBackend,
+        expected: KeyValidation,
+    ) -> KeyValidationResult:
+        cls._validate_key_bytes("key", expected.key)
+        if (
+            expected.key_version is not None
+            and not 0 <= expected.key_version <= cls.byte_max
+        ):
+            msg = "key_version must be between 0 and 255"
+            raise cls.InvalidKeyVersionError(msg)
+
+        authenticated = False
+        actual_key_version: int | None = None
+        key_version_matches: bool | None = None
+
+        try:
+            backend.send_apdu(Ntag424ApduPreset.select_application())
+        except APDU_VALIDATION_ERRORS as exc:
+            authenticated = False
+            error = str(exc)
+            key_version_matches = False if expected.key_version is not None else None
+        else:
+            error = None
+
+        if error is None and expected.key_version is not None:
+            try:
+                data = backend.send_apdu(
+                    Ntag424ApduPreset.get_key_version(
+                        int(expected.key_no),
+                    ),
+                ).data
+            except APDU_VALIDATION_ERRORS as exc:
+                key_version_matches = False
+                error = str(exc)
+            else:
+                if len(data) != 1:
+                    key_version_matches = False
+                    error = "NTAG 424 DNA key version response must be 1 byte"
+                else:
+                    actual_key_version = data[0]
+                    key_version_matches = actual_key_version == expected.key_version
+
+        if error is None:
+            try:
+                Session(
+                    connection=backend,
+                    key_no=int(expected.key_no),
+                    master_key=expected.key,
+                ).authenticate_ev2_first()
+                authenticated = True
+            except APDU_VALIDATION_ERRORS as exc:
+                authenticated = False
+                error = str(exc)
+
+        valid = authenticated and key_version_matches is not False
+        return cls.KeyValidationResult(
+            key_no=expected.key_no,
+            valid=valid,
+            authenticated=authenticated,
+            expected_key_version=expected.key_version,
+            actual_key_version=actual_key_version,
+            key_version_matches=key_version_matches,
+            error=error,
+        )
+
+    @classmethod
+    def build_change_key_apdu(
+        cls,
+        *,
+        update: KeyUpdate,
+        session_key_enc: bytes,
+        session_key_mac: bytes,
+        ti: bytes,
+        cmd_ctr: int,
+    ) -> list[int]:
+        """Build a protected NTAG 424 DNA ChangeKey APDU."""
+        cls._validate_key_update(update)
+        cls._validate_key_bytes("session_key_enc", session_key_enc)
+        cls._validate_key_bytes("session_key_mac", session_key_mac)
+        if len(ti) != cls.ti_size:
+            msg = "ti must be 4 bytes"
+            raise ValueError(msg)
+        if not 0 <= cmd_ctr <= COMMAND_COUNTER_MAX:
+            msg = "cmd_ctr must be between 0 and 65535"
+            raise ValueError(msg)
+
+        plain_key_data = cls._build_change_key_data(update)
+        iv = cls._change_key_iv(
+            session_key_enc=session_key_enc,
+            ti=ti,
+            cmd_ctr=cmd_ctr,
+        )
+        encrypted_key_data = cls.aes_cbc_encrypt_for_ev2(
+            session_key_enc=session_key_enc,
+            iv=iv,
+            plain_data=plain_key_data,
+        )
+        mac = cls._calculate_ev2_mac(
+            session_key_mac=session_key_mac,
+            cmd_code=cls.change_key_cmd,
+            cmd_ctr=cmd_ctr,
+            ti=ti,
+            file_no=bytes([int(update.key_no)]),
+            data=list(encrypted_key_data),
+        )
+        return Ntag424ApduPreset.change_key(
+            key_no=int(update.key_no),
+            encrypted_key_data=list(encrypted_key_data),
+            mac=list(mac),
+        ).to_list()
+
+    @classmethod
+    def _validate_key_update(cls, update: KeyUpdate) -> None:
+        cls._validate_key_bytes("new_key", update.new_key)
+        if not 0 <= update.key_version <= cls.byte_max:
+            msg = "key_version must be between 0 and 255"
+            raise cls.InvalidKeyVersionError(msg)
+        if update.key_no is not Ntag424Key.APP_MASTER and update.old_key is None:
+            msg = (
+                "old_key is required when changing key 1..4; "
+                "use Ntag424.FACTORY_DEFAULT_KEY for factory-default app keys"
+            )
+            raise cls.MissingOldKeyError(msg)
+        if update.old_key is not None:
+            cls._validate_key_bytes("old_key", update.old_key)
+
+    @classmethod
+    def _validate_key_bytes(cls, name: str, value: bytes) -> None:
+        if len(value) != cls.aes_key_size:
+            msg = f"{name} must be 16 bytes"
+            raise cls.InvalidKeyLengthError(msg)
+
+    @classmethod
+    def _build_change_key_data(cls, update: KeyUpdate) -> bytes:
+        """Build plaintext ChangeKey KeyData before EV2 encryption."""
+        if update.key_no is Ntag424Key.APP_MASTER:
+            return update.new_key + bytes([update.key_version])
+
+        if update.old_key is None:
+            msg = (
+                "old_key is required when changing key 1..4; "
+                "use Ntag424.FACTORY_DEFAULT_KEY for factory-default app keys"
+            )
+            raise cls.MissingOldKeyError(msg)
+
+        return (
+            xor_bytes(update.new_key, update.old_key)
+            + bytes([update.key_version])
+            + cls.change_key_crc32(update.new_key)
+        )
+
+    @staticmethod
+    def change_key_crc32(data: bytes) -> bytes:
+        """Return IEEE 802.3 FCS CRC32 bytes used by NTAG ChangeKey."""
+        return (binascii.crc32(data) ^ 0xFFFFFFFF).to_bytes(4, byteorder="little")
+
+    @classmethod
+    def _change_key_iv(
+        cls,
+        *,
+        session_key_enc: bytes,
+        ti: bytes,
+        cmd_ctr: int,
+    ) -> bytes:
+        iv_input = b"\xa5\x5a" + ti + cmd_ctr.to_bytes(2, byteorder="little") + bytes(8)
+        return cls.aes_cbc_encrypt_for_ev2(
+            session_key_enc=session_key_enc,
+            iv=None,
+            plain_data=iv_input,
+        )
 
     def configure_sdm_url(self, url: str, *, cmd_ctr: int = 1) -> None:
         """Authenticate, write an NDEF URL, and enable SDM explicitly."""
@@ -199,10 +552,8 @@ class Ntag424:
 
     def _apdu_select(self) -> None:
         """Select Application"""
-        df_name = [0xD2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01]  # NTAG 424 DNA App ID
-        apdu_select = [0, 164, 4, 0, len(df_name), *df_name]
         _logger.debug("Select Application")
-        self.connection.send_checked(apdu_select)
+        self.connection.send_apdu(Ntag424ApduPreset.select_application())
 
     def write_ndef_url(
         self,
@@ -216,20 +567,15 @@ class Ntag424:
         # ファイル全体のデータ: [Length(2bytes)] + [NDEF Record]
         file_data = [len(ndef_record) >> 8 & 255, len(ndef_record) & 255, *ndef_record]
 
-        # 2. WriteDataコマンドの準備
-        # Command: 90 8D 00 00 [Len] [FileNo] [Offset] [Length] [Data] [MAC] 00
-        file_no = 0x02
-        offset = [0x00, 0x00, 0x00]  # 先頭(0)から書き込み
-        length = int_to_3bytes_le(len(file_data))  # Little Endian 3bytes
-
-        payload = [file_no, *offset, *length, *file_data]
-
-        # 4. 送信
-        apdu = [144, 141, 0, 0, len(payload), *payload, 0]
-
         _logger.debug("Writing URL: %s", url_string)
-        response = self.connection.send_checked(apdu)
-        _logger.debug("Response: %s", toHexString(response))
+        response = self.connection.send_apdu(
+            Ntag424ApduPreset.write_data_file(
+                file_no=Ntag424ApduPreset.ndef_file_no,
+                offset=[0x00, 0x00, 0x00],
+                data=file_data,
+            ),
+        )
+        _logger.debug("Response: %s", toHexString(response.data))
 
     @staticmethod
     def _calculate_ev2_mac(  # noqa: PLR0913
@@ -363,8 +709,8 @@ class Ntag424:
         apdu = [0x90, cmd_code, 0, 0, len(full_data), *full_data, 0]
 
         _logger.debug("Send: %s", toHexString(apdu))
-        response = self.connection.send_checked(apdu)
-        _logger.debug("Rex: %s", toHexString(response))
+        response = self.connection.send_apdu(apdu)
+        _logger.debug("Rex: %s", toHexString(response.data))
 
 
 def verify_sdm_mac(

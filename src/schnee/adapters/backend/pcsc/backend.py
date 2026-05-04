@@ -32,16 +32,6 @@ if TYPE_CHECKING:
 class PcscBackend:
     """Backend adapter that wraps a PC/SC reader."""
 
-    ntag_application_df_name: ClassVar[list[int]] = [
-        0xD2,
-        0x76,
-        0x00,
-        0x00,
-        0x85,
-        0x01,
-        0x01,
-    ]
-    ndef_file_no: ClassVar[int] = 0x02
     ndef_length_header_size: ClassVar[int] = 2
     ntag424_key_slots: ClassVar[int] = 5
     type2_cc_page: ClassVar[int] = 3
@@ -82,9 +72,19 @@ class PcscBackend:
         """Connect to the wrapped PC/SC reader."""
         return self.client.connect()
 
-    def send_apdu(self, apdu: CommandAPDU | list[int]) -> ResponseAPDU:
+    def send_apdu(
+        self,
+        apdu: CommandAPDU | list[int],
+        *,
+        check_status: bool = True,
+        ok_statuses: tuple[tuple[int, int], ...] | None = None,
+    ) -> ResponseAPDU:
         """Transmit an APDU through the wrapped PC/SC reader."""
-        return self.client.send_apdu(apdu)
+        return self.client.send_apdu(
+            apdu,
+            check_status=check_status,
+            ok_statuses=ok_statuses,
+        )
 
     def read_profile(self) -> NtagProfile:
         """Read the currently reachable NTAG profile."""
@@ -95,7 +95,7 @@ class PcscBackend:
             return self._read_type2_profile(uid)
 
         file_settings = Ntag424FileSettings.from_response(
-            self._get_file_settings(self.ndef_file_no),
+            self._get_file_settings(Ntag424ApduPreset.ndef_file_no),
         )
         sections = Ntag424ProfileSections.from_parsed_data(
             file_settings=file_settings,
@@ -127,7 +127,10 @@ class PcscBackend:
 
     def _read_uid(self) -> str:
         """Read UID using the common PC/SC contactless reader command."""
-        response = self.send_apdu(PcscContactlessApduPreset.get_uid())
+        response = self.send_apdu(
+            PcscContactlessApduPreset.get_uid(),
+            check_status=False,
+        )
         if not response.ok:
             msg = f"Unable to read tag UID: status {response.status:#x}"
             raise self.UnsupportedProfileReadError(msg)
@@ -135,14 +138,12 @@ class PcscBackend:
 
     def _select_ntag_application(self) -> None:
         """Select the NTAG 424 DNA application by DF name."""
-        self.client.send_checked(
-            Ntag424ApduPreset.select_application(self.ntag_application_df_name),
-        )
+        self.send_apdu(Ntag424ApduPreset.select_application())
 
     def _read_ndef_profile(self) -> NdefProfile:
         """Read and parse the NDEF file into profile records."""
         length_data = self._read_data_file(
-            file_no=self.ndef_file_no,
+            file_no=Ntag424ApduPreset.ndef_file_no,
             offset=0,
             length=self.ndef_length_header_size,
         )
@@ -155,7 +156,7 @@ class PcscBackend:
             return NdefProfile(present=False)
 
         message = self._read_data_file(
-            file_no=self.ndef_file_no,
+            file_no=Ntag424ApduPreset.ndef_file_no,
             offset=2,
             length=ndef_length,
         )
@@ -168,17 +169,19 @@ class PcscBackend:
     def _read_data_file(self, *, file_no: int, offset: int, length: int) -> list[int]:
         """Read bytes from an NTAG 424 DNA data file."""
         offset_bytes = int_to_3bytes_le(offset)
-        return self.client.send_checked(
+        return self.send_apdu(
             Ntag424ApduPreset.read_data_file(
                 file_no=file_no,
                 offset=offset_bytes,
                 length=int_to_3bytes_le(length),
             ),
-        )
+        ).data
 
     def _get_file_settings(self, file_no: int) -> list[int]:
         """Send GetFileSettings for an NTAG 424 DNA file."""
-        return self.client.send_checked(Ntag424ApduPreset.get_file_settings(file_no))
+        return self.send_apdu(
+            Ntag424ApduPreset.get_file_settings(file_no),
+        ).data
 
     def _get_key_versions(self) -> list[int]:
         """Send GetKeyVersion for all NTAG 424 DNA application key slots."""
@@ -188,7 +191,7 @@ class PcscBackend:
 
     def _get_key_version(self, key_no: int) -> int:
         """Send GetKeyVersion for one NTAG 424 DNA application key."""
-        data = self.client.send_checked(Ntag424ApduPreset.get_key_version(key_no))
+        data = self.send_apdu(Ntag424ApduPreset.get_key_version(key_no)).data
         if len(data) != 1:
             msg = "NTAG 424 DNA key version response must be 1 byte"
             raise self.UnsupportedProfileReadError(msg)
@@ -236,12 +239,12 @@ class PcscBackend:
 
     def _read_type2_page(self, page: int) -> list[int]:
         """Read one Type 2 Tag page using the PC/SC READ BINARY command."""
-        data = self.client.send_checked(
+        data = self.send_apdu(
             PcscContactlessApduPreset.read_binary(
                 page=page,
                 length=self.type2_page_size,
             ),
-        )
+        ).data
         if len(data) != self.type2_page_size:
             msg = "Type 2 Tag page reads must return 4 bytes"
             raise self.NdefParseError(msg)

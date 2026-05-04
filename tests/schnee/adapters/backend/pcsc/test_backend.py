@@ -67,6 +67,17 @@ def test_pcsc_backend_reads_tag_info_uid() -> None:
     ]
 
 
+def test_pcsc_backend_send_apdu_can_check_status() -> None:
+    """PC/SC backend can check APDU status without leaking client."""
+    reader = FakeReader()
+    backend = PcscBackend(reader=reader)
+    apdu = [0x90, 0x64, 0x00, 0x00, 0x01, 0x02, 0x00]
+    reader.connection.responses[tuple(apdu)] = [0x11]
+
+    assert backend.send_apdu(apdu).data == [0x11]
+    assert reader.connection.commands[-1] == apdu
+
+
 def test_pcsc_backend_reads_ntag424_profile_settings() -> None:
     """PC/SC backend reads NTAG 424 DNA NDEF, SDM, access, and key state."""
     reader = FakeReader()

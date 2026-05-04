@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from .base import Byte, CommandAPDU
 
 
@@ -22,10 +24,71 @@ class PcscContactlessApduPreset:
 class Ntag424ApduPreset:
     """Factory for NTAG 424 DNA native APDUs wrapped for ISO transport."""
 
+    application_df_name: ClassVar[list[Byte]] = [
+        0xD2,
+        0x76,
+        0x00,
+        0x00,
+        0x85,
+        0x01,
+        0x01,
+    ]
+    ndef_file_no: ClassVar[int] = 0x02
+
     @staticmethod
-    def select_application(df_name: list[Byte]) -> CommandAPDU:
+    def select_application(
+        df_name: list[Byte] | None = None,
+    ) -> CommandAPDU:
         """Build a SELECT command for the NTAG 424 DNA application DF name."""
-        return CommandAPDU(cla=0x00, ins=0xA4, p1=0x04, p2=0x00, data=df_name)
+        data = Ntag424ApduPreset.application_df_name if df_name is None else df_name
+        return CommandAPDU(
+            cla=0x00,
+            ins=0xA4,
+            p1=0x04,
+            p2=0x00,
+            data=data,
+        )
+
+    @staticmethod
+    def authenticate_ev2_first(key_no: int) -> CommandAPDU:
+        """Build an NTAG 424 DNA AuthenticateEV2First command."""
+        return CommandAPDU(
+            cla=0x90,
+            ins=0x71,
+            p1=0x00,
+            p2=0x00,
+            data=[key_no, 0x00],
+            le=0x00,
+        )
+
+    @staticmethod
+    def additional_frame(data: list[Byte]) -> CommandAPDU:
+        """Build an NTAG 424 DNA AdditionalFrame command."""
+        return CommandAPDU(
+            cla=0x90,
+            ins=0xAF,
+            p1=0x00,
+            p2=0x00,
+            data=data,
+            le=0x00,
+        )
+
+    @staticmethod
+    def change_key(
+        *,
+        key_no: int,
+        encrypted_key_data: list[Byte],
+        mac: list[Byte],
+    ) -> CommandAPDU:
+        """Build an NTAG 424 DNA ChangeKey command."""
+        return CommandAPDU(
+            cla=0x90,
+            ins=0xC4,
+            p1=0x00,
+            p2=0x00,
+            data=[key_no, *encrypted_key_data, *mac],
+            le=0x00,
+        )
 
     @staticmethod
     def read_data_file(
@@ -41,6 +104,28 @@ class Ntag424ApduPreset:
             p1=0x00,
             p2=0x00,
             data=[file_no, *offset, *length],
+            le=0x00,
+        )
+
+    @staticmethod
+    def write_data_file(
+        *,
+        file_no: int,
+        offset: list[Byte],
+        data: list[Byte],
+    ) -> CommandAPDU:
+        """Build an NTAG 424 DNA WriteData command."""
+        length = [
+            len(data) & 0xFF,
+            (len(data) >> 8) & 0xFF,
+            (len(data) >> 16) & 0xFF,
+        ]
+        return CommandAPDU(
+            cla=0x90,
+            ins=0x8D,
+            p1=0x00,
+            p2=0x00,
+            data=[file_no, *offset, *length, *data],
             le=0x00,
         )
 

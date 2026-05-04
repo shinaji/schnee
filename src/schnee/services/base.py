@@ -16,7 +16,7 @@ class _ServiceCore[T](ABC):
     class Request(_RequestBase): ...
 
     def __init__(self, req: ReqType) -> None:
-        self._request = req
+        self.req = req
 
     @abstractmethod
     def process(self) -> T: ...
