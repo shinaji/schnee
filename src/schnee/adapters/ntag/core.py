@@ -534,7 +534,7 @@ class Ntag424:
             plain_data=iv_input,
         )
 
-    def configure_sdm_url(self, url: str, *, cmd_ctr: int = 1) -> None:
+    def configure_sdm_url(self, url: str, *, cmd_ctr: int = 0) -> None:
         """Authenticate, write an NDEF URL, and enable SDM explicitly."""
         self.write_ndef_url_with_auth(url)
         self.set_sdm_enabled(enabled=True, url_template=url, cmd_ctr=cmd_ctr)

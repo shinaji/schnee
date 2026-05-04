@@ -89,6 +89,43 @@ def test_ntag424_accepts_explicit_factory_default_key(
     assert ntag.session.master_key == Ntag424.FACTORY_DEFAULT_KEY
 
 
+def test_configure_sdm_url_defaults_command_counter_to_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SDM configuration re-authenticates before ChangeFileSettings."""
+    calls: list[tuple[str, object]] = []
+    ntag = object.__new__(Ntag424)
+
+    def write_ndef_url_with_auth(_self: Ntag424, url: str) -> None:
+        calls.append(("write_ndef_url_with_auth", url))
+
+    def set_sdm_enabled(
+        _self: Ntag424,
+        *,
+        enabled: bool,
+        url_template: str | None,
+        cmd_ctr: int,
+    ) -> None:
+        calls.append(("set_sdm_enabled", (enabled, url_template, cmd_ctr)))
+
+    monkeypatch.setattr(
+        Ntag424,
+        "write_ndef_url_with_auth",
+        write_ndef_url_with_auth,
+    )
+    monkeypatch.setattr(Ntag424, "set_sdm_enabled", set_sdm_enabled)
+
+    ntag.configure_sdm_url("https://example.com/t?uid=UU&ctr=CC&mac=MM")
+
+    assert calls == [
+        ("write_ndef_url_with_auth", "https://example.com/t?uid=UU&ctr=CC&mac=MM"),
+        (
+            "set_sdm_enabled",
+            (True, "https://example.com/t?uid=UU&ctr=CC&mac=MM", 0),
+        ),
+    ]
+
+
 def test_validate_keys_authenticates_expected_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
