@@ -32,16 +32,6 @@ if TYPE_CHECKING:
 class PcscBackend:
     """Backend adapter that wraps a PC/SC reader."""
 
-    ntag_application_df_name: ClassVar[list[int]] = [
-        0xD2,
-        0x76,
-        0x00,
-        0x00,
-        0x85,
-        0x01,
-        0x01,
-    ]
-    ndef_file_no: ClassVar[int] = 0x02
     ndef_length_header_size: ClassVar[int] = 2
     ntag424_key_slots: ClassVar[int] = 5
     type2_cc_page: ClassVar[int] = 3
@@ -95,7 +85,7 @@ class PcscBackend:
             return self._read_type2_profile(uid)
 
         file_settings = Ntag424FileSettings.from_response(
-            self._get_file_settings(self.ndef_file_no),
+            self._get_file_settings(Ntag424ApduPreset.ndef_file_no),
         )
         sections = Ntag424ProfileSections.from_parsed_data(
             file_settings=file_settings,
@@ -135,14 +125,12 @@ class PcscBackend:
 
     def _select_ntag_application(self) -> None:
         """Select the NTAG 424 DNA application by DF name."""
-        self.client.send_checked(
-            Ntag424ApduPreset.select_application(self.ntag_application_df_name),
-        )
+        self.client.send_checked(Ntag424ApduPreset.select_application())
 
     def _read_ndef_profile(self) -> NdefProfile:
         """Read and parse the NDEF file into profile records."""
         length_data = self._read_data_file(
-            file_no=self.ndef_file_no,
+            file_no=Ntag424ApduPreset.ndef_file_no,
             offset=0,
             length=self.ndef_length_header_size,
         )
@@ -155,7 +143,7 @@ class PcscBackend:
             return NdefProfile(present=False)
 
         message = self._read_data_file(
-            file_no=self.ndef_file_no,
+            file_no=Ntag424ApduPreset.ndef_file_no,
             offset=2,
             length=ndef_length,
         )

@@ -7,6 +7,7 @@ from Crypto.Util.Padding import pad
 from smartcard.util import toHexString
 
 from schnee.adapters.backend.pcsc import PcscApduClient, PcscReaderProvider
+from schnee.adapters.ntag.apdu import Ntag424ApduPreset
 from schnee.adapters.ntag.crypt import aes_decrypt, aes_encrypt, xor_bytes
 from schnee.adapters.ntag.utils import (
     Offset,
@@ -48,9 +49,12 @@ class Session:
         return self._authenticate_ev2_first()
 
     def _authenticate_ev2_first(self) -> tuple[bytes, bytes, bytes, bytes]:
-        cmd_auth_1 = [0x90, 0x71, 0x00, 0x00, 0x02, self.key_no, 0x00, 0x00]
         _logger.debug("AuthEv2First (Get RndB)")
-        encrypted_rnd_b = bytes(self.connection.send_checked(cmd_auth_1))
+        encrypted_rnd_b = bytes(
+            self.connection.send_checked(
+                Ntag424ApduPreset.authenticate_ev2_first(self.key_no),
+            ),
+        )
 
         # タグから戻ってきた暗号化されたRndB (末尾の90 00ステータスを除く)
         # resp_1 は Enc(RndB)
@@ -75,15 +79,7 @@ class Session:
         # 90 AF 00 00 (Len) (EncData) 00
         resp_2 = bytes(
             self.connection.send_checked(
-                [
-                    0x90,
-                    0xAF,
-                    0x00,
-                    0x00,
-                    len(encrypted_payload),
-                    *list(encrypted_payload),
-                    0x00,
-                ],
+                Ntag424ApduPreset.additional_frame(list(encrypted_payload)),
             ),
         )
         return self._verify_and_derive_keys(
@@ -199,10 +195,8 @@ class Ntag424:
 
     def _apdu_select(self) -> None:
         """Select Application"""
-        df_name = [0xD2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01]  # NTAG 424 DNA App ID
-        apdu_select = [0, 164, 4, 0, len(df_name), *df_name]
         _logger.debug("Select Application")
-        self.connection.send_checked(apdu_select)
+        self.connection.send_checked(Ntag424ApduPreset.select_application())
 
     def write_ndef_url(
         self,
@@ -216,19 +210,14 @@ class Ntag424:
         # ファイル全体のデータ: [Length(2bytes)] + [NDEF Record]
         file_data = [len(ndef_record) >> 8 & 255, len(ndef_record) & 255, *ndef_record]
 
-        # 2. WriteDataコマンドの準備
-        # Command: 90 8D 00 00 [Len] [FileNo] [Offset] [Length] [Data] [MAC] 00
-        file_no = 0x02
-        offset = [0x00, 0x00, 0x00]  # 先頭(0)から書き込み
-        length = int_to_3bytes_le(len(file_data))  # Little Endian 3bytes
-
-        payload = [file_no, *offset, *length, *file_data]
-
-        # 4. 送信
-        apdu = [144, 141, 0, 0, len(payload), *payload, 0]
-
         _logger.debug("Writing URL: %s", url_string)
-        response = self.connection.send_checked(apdu)
+        response = self.connection.send_checked(
+            Ntag424ApduPreset.write_data_file(
+                file_no=Ntag424ApduPreset.ndef_file_no,
+                offset=[0x00, 0x00, 0x00],
+                data=file_data,
+            ),
+        )
         _logger.debug("Response: %s", toHexString(response))
 
     @staticmethod
