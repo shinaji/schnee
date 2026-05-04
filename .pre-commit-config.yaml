@@ -11,8 +11,8 @@ repos:
 
       - id: nox-pre-push
         name: Run Nox pre-push hook
-        entry: uv run nox -s test --
+        entry: uv run nox -s test
         language: system
         types: [python]
-        pass_filenames: true
+        pass_filenames: false
         stages: ["pre-push"]
