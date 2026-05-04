@@ -29,8 +29,11 @@ class Session:
         self,
         connection: PcscApduClient,
         key_no: int = 0x00,
-        master_key: bytes = bytes.fromhex("00000000000000000000000000000000"),
+        master_key: bytes | None = None,
     ) -> None:
+        if master_key is None:
+            msg = "master_key must be provided explicitly"
+            raise self.SessionError(msg)
         self.connection = connection
         self.key_no = key_no
         self.master_key = master_key
@@ -157,8 +160,11 @@ class Ntag424:
     def __init__(
         self,
         name: str,
-        master_key: bytes = bytes.fromhex("00000000000000000000000000000000"),
+        master_key: bytes | None = None,
     ) -> None:
+        if master_key is None:
+            msg = "master_key must be provided explicitly"
+            raise ValueError(msg)
         self.reader = PcscReaderProvider.get(name)
         self.connection = PcscApduClient(reader=self.reader)
         self.session = Session(
