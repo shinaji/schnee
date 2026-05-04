@@ -91,7 +91,7 @@ class PcscBackend:
         uid = self._read_uid()
         try:
             self._select_ntag_application()
-        except (CardConnectionException, PcscApduClient.PcscApduClientError):
+        except CardConnectionException, PcscApduClient.PcscApduClientError:
             return self._read_type2_profile(uid)
 
         file_settings = Ntag424FileSettings.from_response(
@@ -115,7 +115,7 @@ class PcscBackend:
         uid = self._read_uid()
         try:
             self._select_ntag_application()
-        except (CardConnectionException, PcscApduClient.PcscApduClientError):
+        except CardConnectionException, PcscApduClient.PcscApduClientError:
             return self._read_type2_tag_info(uid)
         return TagInfo(type="NTAG424DNA", uid=uid)
 
