@@ -66,9 +66,9 @@ class Session:
     def _authenticate_ev2_first(self) -> tuple[bytes, bytes, bytes, bytes]:
         _logger.debug("AuthEv2First (Get RndB)")
         encrypted_rnd_b = bytes(
-            self.connection.send_checked(
+            self.connection.send_apdu(
                 Ntag424ApduPreset.authenticate_ev2_first(self.key_no),
-            ),
+            ).data,
         )
 
         # タグから戻ってきた暗号化されたRndB (末尾の90 00ステータスを除く)
@@ -93,9 +93,9 @@ class Session:
         # 6. Part 2: コマンド送信 (Send RndA + RndB')
         # 90 AF 00 00 (Len) (EncData) 00
         resp_2 = bytes(
-            self.connection.send_checked(
+            self.connection.send_apdu(
                 Ntag424ApduPreset.additional_frame(list(encrypted_payload)),
-            ),
+            ).data,
         )
         return self._verify_and_derive_keys(
             rnd_a=rnd_a,
@@ -277,7 +277,7 @@ class Ntag424:
                 int(update.key_no),
                 toHexString(apdu),
             )
-            self.connection.send_checked(apdu)
+            self.connection.send_apdu(apdu)
             cmd_ctr += 1
 
     @classmethod
@@ -402,7 +402,7 @@ class Ntag424:
     def _apdu_select(self) -> None:
         """Select Application"""
         _logger.debug("Select Application")
-        self.connection.send_checked(Ntag424ApduPreset.select_application())
+        self.connection.send_apdu(Ntag424ApduPreset.select_application())
 
     def write_ndef_url(
         self,
@@ -417,14 +417,14 @@ class Ntag424:
         file_data = [len(ndef_record) >> 8 & 255, len(ndef_record) & 255, *ndef_record]
 
         _logger.debug("Writing URL: %s", url_string)
-        response = self.connection.send_checked(
+        response = self.connection.send_apdu(
             Ntag424ApduPreset.write_data_file(
                 file_no=Ntag424ApduPreset.ndef_file_no,
                 offset=[0x00, 0x00, 0x00],
                 data=file_data,
             ),
         )
-        _logger.debug("Response: %s", toHexString(response))
+        _logger.debug("Response: %s", toHexString(response.data))
 
     @staticmethod
     def _calculate_ev2_mac(  # noqa: PLR0913
@@ -558,8 +558,8 @@ class Ntag424:
         apdu = [0x90, cmd_code, 0, 0, len(full_data), *full_data, 0]
 
         _logger.debug("Send: %s", toHexString(apdu))
-        response = self.connection.send_checked(apdu)
-        _logger.debug("Rex: %s", toHexString(response))
+        response = self.connection.send_apdu(apdu)
+        _logger.debug("Rex: %s", toHexString(response.data))
 
 
 def verify_sdm_mac(

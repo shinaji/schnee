@@ -44,21 +44,20 @@ class PcscApduClient:
             self.connection.connect()
         return self.connection
 
-    def send_apdu(self, apdu: CommandAPDU | list[int]) -> ResponseAPDU:
-        """Transmit an APDU and return the full response."""
-        command = apdu.to_list() if isinstance(apdu, CommandAPDU) else apdu
-        response, sw1, sw2 = self.connect().transmit(command)
-        return ResponseAPDU(data=response, sw1=sw1, sw2=sw2)
-
-    def send_checked(
+    def send_apdu(
         self,
         apdu: CommandAPDU | list[int],
         *,
+        check_status: bool = True,
         ok_statuses: tuple[tuple[int, int], ...] | None = None,
-    ) -> list[int]:
-        """Transmit an APDU and return data for successful status words."""
-        response = self.send_apdu(apdu)
+    ) -> ResponseAPDU:
+        """Transmit an APDU and optionally raise for unsuccessful status words."""
+        command = apdu.to_list() if isinstance(apdu, CommandAPDU) else apdu
+        response, sw1, sw2 = self.connect().transmit(command)
+        response_apdu = ResponseAPDU(data=response, sw1=sw1, sw2=sw2)
+        if not check_status:
+            return response_apdu
         statuses = self.ok_statuses if ok_statuses is None else ok_statuses
-        if (response.sw1, response.sw2) in statuses:
-            return response.data
-        raise self.ApduStatusError(response.sw1, response.sw2)
+        if (response_apdu.sw1, response_apdu.sw2) in statuses:
+            return response_apdu
+        raise self.ApduStatusError(response_apdu.sw1, response_apdu.sw2)

@@ -39,17 +39,17 @@ class FakeReader:
         return self.connection
 
 
-def test_pcsc_apdu_client_returns_checked_response_data() -> None:
-    """PC/SC APDU client returns data for accepted status words."""
+def test_pcsc_apdu_client_checks_accepted_status_words() -> None:
+    """PC/SC APDU client returns a response for accepted status words."""
     reader = FakeReader()
     reader.connection.response = [0x01]
     reader.connection.sw1 = 0x91
     reader.connection.sw2 = 0xAF
     client = PcscApduClient(reader)
 
-    response = client.send_checked([0x90, 0xAF, 0x00, 0x00, 0x00])
+    response = client.send_apdu([0x90, 0xAF, 0x00, 0x00, 0x00])
 
-    assert response == [0x01]
+    assert response.data == [0x01]
 
 
 def test_pcsc_apdu_client_raises_for_unexpected_status() -> None:
@@ -60,4 +60,4 @@ def test_pcsc_apdu_client_raises_for_unexpected_status() -> None:
     client = PcscApduClient(reader)
 
     with pytest.raises(PcscApduClient.ApduStatusError):
-        client.send_checked([0x00, 0xA4, 0x00, 0x00])
+        client.send_apdu([0x00, 0xA4, 0x00, 0x00])
