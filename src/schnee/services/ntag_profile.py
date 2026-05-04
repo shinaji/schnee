@@ -21,9 +21,7 @@ class ReadNtagProfileService(Service[NtagProfile]):
     def process(self) -> NtagProfile:
         """Read the current NTAG profile."""
         backend = Backend.get(name="pcsc")
-        profile = backend.read_profile()
-        print(profile)
-        return profile
+        return backend.read_profile()
 
 
 def main() -> int:
