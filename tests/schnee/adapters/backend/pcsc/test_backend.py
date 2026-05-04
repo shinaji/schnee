@@ -236,6 +236,50 @@ def test_pcsc_backend_falls_back_to_type2_ntag215_reads() -> None:
     assert profile.capacity_bytes == NTAG215_NDEF_CAPACITY_BYTES
     assert profile.ndef.records[0].value == "https://example.com"
     assert "sdm" not in profile.model_dump()
+    assert reader.connection.commands.count([0xFF, 0xB0, 0x00, 0x03, 0x04]) == 1
+
+
+def test_pcsc_backend_wraps_type2_ndef_parse_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PC/SC backend exposes malformed Type 2 NDEF as a backend error."""
+    reader = FakeReader()
+    backend = PcscBackend(reader=reader)
+    monkeypatch.setattr(PcscBackend, "type2_capacity_types", {8: "NTAG213"})
+    select_apdu = (
+        0x00,
+        0xA4,
+        0x04,
+        0x00,
+        0x07,
+        0xD2,
+        0x76,
+        0x00,
+        0x00,
+        0x85,
+        0x01,
+        0x01,
+    )
+    reader.connection.exceptions = {
+        select_apdu: CardConnectionException("unsupported native select"),
+    }
+    reader.connection.responses = {
+        (0xFF, 0xCA, 0x00, 0x00, 0x00): [
+            0x04,
+            0x11,
+            0x22,
+            0x33,
+            0x44,
+            0x55,
+            0x66,
+        ],
+        (0xFF, 0xB0, 0x00, 0x03, 0x04): [0xE1, 0x10, 0x01, 0x00],
+        (0xFF, 0xB0, 0x00, 0x04, 0x04): [0x03, 0x10, 0xD1, 0x01],
+        (0xFF, 0xB0, 0x00, 0x05, 0x04): [0x00, 0x00, 0x00, 0x00],
+    }
+
+    with pytest.raises(PcscBackend.NdefParseError, match="Truncated"):
+        backend.read_profile()
 
 
 def test_pcsc_backend_sends_command_apdu() -> None:

@@ -196,18 +196,26 @@ class PcscBackend:
 
     def _read_type2_profile(self, uid: str) -> Ntag21xProfile:
         """Read an NTAG21x/Type 2 Tag profile through PC/SC binary reads."""
-        tag = self._read_type2_tag_info(uid)
         capacity_bytes = self._read_type2_capacity_bytes()
+        tag = self._build_type2_tag_info(uid=uid, capacity_bytes=capacity_bytes)
         memory = self._read_type2_ndef_memory(capacity_bytes)
+        try:
+            ndef = NdefProfileParser.parse_type2_memory(memory)
+        except NdefProfileParser.NdefParseError as exc:
+            raise self.NdefParseError(str(exc)) from exc
         return Ntag21xProfile(
             tag=tag,
             capacity_bytes=capacity_bytes,
-            ndef=NdefProfileParser.parse_type2_memory(memory),
+            ndef=ndef,
         )
 
     def _read_type2_tag_info(self, uid: str) -> TagInfo:
         """Read Type 2 capability data and return detected tag metadata."""
         capacity_bytes = self._read_type2_capacity_bytes()
+        return self._build_type2_tag_info(uid=uid, capacity_bytes=capacity_bytes)
+
+    def _build_type2_tag_info(self, *, uid: str, capacity_bytes: int) -> TagInfo:
+        """Build Type 2 tag metadata from already-read capability data."""
         return TagInfo(
             type=self._detect_type2_tag_type(capacity_bytes),
             uid=uid,
