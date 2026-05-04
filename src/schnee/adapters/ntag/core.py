@@ -28,12 +28,6 @@ if TYPE_CHECKING:
 _logger = get_logger(__name__)
 
 KEY_VERSION_MAX = 0xFF
-APDU_VALIDATION_ERRORS = (
-    CardConnectionException,
-    PcscApduClient.PcscApduClientError,
-    PcscBackend.PcscBackendError,
-    RuntimeError,
-)
 
 
 class Ntag424Key(IntEnum):
@@ -51,6 +45,9 @@ class Session:
 
     class SessionError(Exception):
         """Session error"""
+
+    class AuthenticationError(SessionError):
+        """Raised when EV2 authentication response verification fails."""
 
     def __init__(
         self,
@@ -149,7 +146,7 @@ class Session:
 
         if rnd_a_prime_received != rnd_a_prime_expected:
             msg = "Authentication Failed: RndA mismatch! (Tag might be fake)"
-            raise RuntimeError(msg)
+            raise self.AuthenticationError(msg)
 
         # 3. セッションキーの生成 (KDF: Key Derivation Function)
         # NTAG 424 DNA (EV2) 固有の「共有ベクトル(SV)」を作成します
@@ -174,6 +171,14 @@ class Session:
         _logger.debug("IV: %s", toHexString(list(iv)))
 
         return session_key_enc, session_key_mac, ti, iv
+
+
+APDU_VALIDATION_ERRORS = (
+    CardConnectionException,
+    PcscApduClient.PcscApduClientError,
+    PcscBackend.PcscBackendError,
+    Session.AuthenticationError,
+)
 
 
 class Ntag424:
