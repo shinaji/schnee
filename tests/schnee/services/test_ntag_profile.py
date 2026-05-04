@@ -49,10 +49,12 @@ def test_ntag424_key_update_request_requires_old_key_for_non_master() -> None:
 
 def test_ntag424_key_update_request_accepts_int_key_number() -> None:
     """Service requests keep accepting serialized numeric key numbers."""
-    update = Ntag424KeyUpdateRequest(
-        key_no=Ntag424Key.APP_KEY_1,
-        new_key=bytes(16),
-        old_key=bytes(16),
+    update = Ntag424KeyUpdateRequest.model_validate(
+        {
+            "key_no": int(Ntag424Key.APP_KEY_1),
+            "new_key": bytes(16),
+            "old_key": bytes(16),
+        },
     )
 
     assert update.key_no is Ntag424Key.APP_KEY_1

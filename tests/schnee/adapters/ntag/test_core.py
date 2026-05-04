@@ -225,8 +225,12 @@ def test_build_change_key_apdu_requires_old_key_for_non_master_key() -> None:
 
 def test_key_update_accepts_int_compatible_key_numbers() -> None:
     """The low-level update model normalizes existing numeric key callers."""
-    update = Ntag424.KeyUpdate(
-        key_no=Ntag424Key.APP_KEY_2, new_key=bytes(16), old_key=bytes(16)
+    update = Ntag424.KeyUpdate.model_validate(
+        {
+            "key_no": int(Ntag424Key.APP_KEY_2),
+            "new_key": bytes(16),
+            "old_key": bytes(16),
+        },
     )
 
     assert update.key_no is Ntag424Key.APP_KEY_2
