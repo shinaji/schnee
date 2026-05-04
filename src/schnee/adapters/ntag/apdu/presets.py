@@ -20,6 +20,11 @@ class PcscContactlessApduPreset:
         """Build a PC/SC READ BINARY command."""
         return CommandAPDU(cla=0xFF, ins=0xB0, p1=0x00, p2=page, le=length)
 
+    @staticmethod
+    def update_binary(*, page: int, data: list[Byte]) -> CommandAPDU:
+        """Build a PC/SC UPDATE BINARY command."""
+        return CommandAPDU(cla=0xFF, ins=0xD6, p1=0x00, p2=page, data=data)
+
 
 class Ntag424ApduPreset:
     """Factory for NTAG 424 DNA native APDUs wrapped for ISO transport."""

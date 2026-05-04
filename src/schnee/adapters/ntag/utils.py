@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 
 NDEF_HEADER_LEN = 7
+TYPE2_NDEF_TLV = 0x03
+TYPE2_TERMINATOR_TLV = 0xFE
+TYPE2_EXTENDED_TLV_LENGTH = 0xFF
 
 
 class PlaceholderNotFoundError(ValueError):
@@ -27,6 +30,27 @@ def wrap_ndef_record(url_string: str) -> list[int]:
     no_prefix = [0x00]
 
     return header + no_prefix + list(url_bytes)
+
+
+def build_ndef_url_file_data(url_string: str) -> list[int]:
+    """Build NTAG 424 NDEF file bytes for one URL record."""
+    ndef_record = wrap_ndef_record(url_string)
+    return [len(ndef_record) >> 8 & 255, len(ndef_record) & 255, *ndef_record]
+
+
+def build_type2_ndef_url_tlv(url_string: str) -> list[int]:
+    """Build Type 2 Tag NDEF TLV bytes for one URL record."""
+    ndef_record = wrap_ndef_record(url_string)
+    if len(ndef_record) < TYPE2_EXTENDED_TLV_LENGTH:
+        return [TYPE2_NDEF_TLV, len(ndef_record), *ndef_record, TYPE2_TERMINATOR_TLV]
+    return [
+        TYPE2_NDEF_TLV,
+        TYPE2_EXTENDED_TLV_LENGTH,
+        len(ndef_record) >> 8 & 255,
+        len(ndef_record) & 255,
+        *ndef_record,
+        TYPE2_TERMINATOR_TLV,
+    ]
 
 
 @dataclass

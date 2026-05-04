@@ -10,6 +10,7 @@ from Crypto.Util.Padding import pad
 from schnee.adapters.backend.pcsc import PcscBackend
 from schnee.adapters.ntag.apdu import CommandAPDU, ResponseAPDU
 from schnee.adapters.ntag.core import Ntag424, Ntag424Key, Session
+from schnee.adapters.ntag.utils import Offset
 
 if TYPE_CHECKING:
     from schnee.adapters.backend.contracts import ProfileReaderBackend
@@ -86,6 +87,43 @@ def test_ntag424_accepts_explicit_factory_default_key(
     assert ntag.backend is backend
     assert ntag.connection is backend
     assert ntag.session.master_key == Ntag424.FACTORY_DEFAULT_KEY
+
+
+def test_configure_sdm_url_defaults_command_counter_to_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SDM configuration re-authenticates before ChangeFileSettings."""
+    calls: list[tuple[str, object]] = []
+    ntag = object.__new__(Ntag424)
+
+    def write_ndef_url_with_auth(_self: Ntag424, url: str) -> None:
+        calls.append(("write_ndef_url_with_auth", url))
+
+    def set_sdm_enabled(
+        _self: Ntag424,
+        *,
+        enabled: bool,
+        url_template: str | None,
+        cmd_ctr: int,
+    ) -> None:
+        calls.append(("set_sdm_enabled", (enabled, url_template, cmd_ctr)))
+
+    monkeypatch.setattr(
+        Ntag424,
+        "write_ndef_url_with_auth",
+        write_ndef_url_with_auth,
+    )
+    monkeypatch.setattr(Ntag424, "set_sdm_enabled", set_sdm_enabled)
+
+    ntag.configure_sdm_url("https://example.com/t?uid=UU&ctr=CC&mac=MM")
+
+    assert calls == [
+        ("write_ndef_url_with_auth", "https://example.com/t?uid=UU&ctr=CC&mac=MM"),
+        (
+            "set_sdm_enabled",
+            (True, "https://example.com/t?uid=UU&ctr=CC&mac=MM", 0),
+        ),
+    ]
 
 
 def test_validate_keys_authenticates_expected_key(
@@ -206,6 +244,40 @@ def test_build_change_key_apdu_for_master_key_uses_short_key_data() -> None:
 
     assert apdu[:6] == [0x90, 0xC4, 0x00, 0x00, 0x29, 0x00]
     assert len(apdu) == SHORT_CHANGE_KEY_APDU_LENGTH
+
+
+def test_ntag424_builds_sdm_settings_payloads() -> None:
+    """SDM enable and disable payloads are explicit and separate."""
+    enable_payload = Ntag424._build_enable_sdm_payload(  # noqa: SLF001
+        offset=Offset(
+            uid_offset=0x20,
+            counter_offset=0x35,
+            mac_offset=0x43,
+            mac_input_offset=0x07,
+        ),
+    )
+
+    assert enable_payload == [
+        0x40,
+        0x00,
+        0xE0,
+        0xC1,
+        0xF1,
+        0xE1,
+        0x20,
+        0x00,
+        0x00,
+        0x35,
+        0x00,
+        0x00,
+        0x07,
+        0x00,
+        0x00,
+        0x43,
+        0x00,
+        0x00,
+    ]
+    assert Ntag424._build_disable_sdm_payload() == [0x00, 0x00, 0xE0]  # noqa: SLF001
 
 
 @pytest.mark.parametrize("cmd_ctr", [-1, 0x10000])

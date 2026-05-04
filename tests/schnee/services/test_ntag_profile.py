@@ -9,8 +9,10 @@ from schnee.adapters.ntag.core import Ntag424Key, Session
 from schnee.services.ntag_profile import (
     Ntag424KeyUpdateRequest,
     Ntag424KeyValidationRequest,
+    SetNtag424SdmService,
     UpdateNtag424KeysService,
     ValidateNtag424KeysService,
+    WriteNdefUrlService,
 )
 
 GET_KEY_VERSION_INS = 0x64
@@ -81,6 +83,149 @@ def test_update_ntag424_keys_request_rejects_duplicate_key_slots() -> None:
             master_key=bytes(16),
             updates=[update, update],
         )
+
+
+def test_write_ndef_url_service_delegates_to_pcsc_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NDEF writing is exposed independently from SDM configuration."""
+    backend = object.__new__(PcscBackend)
+    written_urls: list[str] = []
+    backend.write_ndef_url = written_urls.append
+
+    monkeypatch.setattr(
+        "schnee.services.ntag_profile.Backend.get",
+        lambda _name: backend,
+    )
+
+    WriteNdefUrlService.call(
+        WriteNdefUrlService.Request(
+            backend_name="pcsc:Reader A",
+            url="https://example.com",
+        ),
+    )
+
+    assert written_urls == ["https://example.com"]
+
+
+def test_write_ndef_url_service_can_authenticate_ntag424(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NDEF-only writes can still authenticate for protected NTAG 424 files."""
+    calls: list[str] = []
+
+    class FakeNtag424:
+        """Fake NTAG 424 helper for authenticated NDEF writes."""
+
+        def __init__(self, *, backend_name: str, master_key: bytes) -> None:
+            assert backend_name == "pcsc:Reader A"
+            assert master_key == bytes(16)
+
+        def write_ndef_url_with_auth(self, url: str) -> None:
+            calls.append(url)
+
+    monkeypatch.setattr("schnee.services.ntag_profile.Ntag424", FakeNtag424)
+
+    WriteNdefUrlService.call(
+        WriteNdefUrlService.Request(
+            backend_name="pcsc:Reader A",
+            url="https://example.com",
+            ntag424_master_key=bytes(16),
+        ),
+    )
+
+    assert calls == ["https://example.com"]
+
+
+def test_write_ndef_url_service_validates_optional_ntag424_key() -> None:
+    """Authenticated NTAG 424 NDEF writes require a full AES-128 key."""
+    with pytest.raises(ValidationError, match="ntag424_master_key"):
+        WriteNdefUrlService.Request(
+            backend_name="pcsc:Reader A",
+            url="https://example.com",
+            ntag424_master_key=b"short",
+        )
+
+
+def test_set_ntag424_sdm_request_requires_url_template_when_enabling() -> None:
+    """Enabling SDM needs the URL template used to calculate mirror offsets."""
+    with pytest.raises(ValidationError, match="url_template"):
+        SetNtag424SdmService.Request(
+            backend_name="pcsc:Reader A",
+            master_key=bytes(16),
+            enabled=True,
+        )
+
+
+def test_set_ntag424_sdm_service_delegates_to_ntag424(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The SDM service handles enable/disable without writing NDEF content."""
+    calls: list[tuple[bool, str | None, int]] = []
+
+    class FakeNtag424:
+        """Fake NTAG 424 helper for service delegation."""
+
+        def __init__(self, *, backend_name: str, master_key: bytes) -> None:
+            assert backend_name == "pcsc:Reader A"
+            assert master_key == bytes(16)
+
+        def set_sdm_enabled(
+            self,
+            *,
+            enabled: bool,
+            url_template: str | None,
+            cmd_ctr: int,
+        ) -> None:
+            calls.append((enabled, url_template, cmd_ctr))
+
+    monkeypatch.setattr("schnee.services.ntag_profile.Ntag424", FakeNtag424)
+
+    SetNtag424SdmService.call(
+        SetNtag424SdmService.Request(
+            backend_name="pcsc:Reader A",
+            master_key=bytes(16),
+            enabled=False,
+            cmd_ctr_start=4,
+        ),
+    )
+
+    assert calls == [(False, None, 4)]
+
+
+def test_set_ntag424_sdm_service_defaults_command_counter_to_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SDM-only changes use command counter 0 after a fresh authentication."""
+    calls: list[int] = []
+
+    class FakeNtag424:
+        """Fake NTAG 424 helper for command-counter delegation."""
+
+        def __init__(self, *, backend_name: str, master_key: bytes) -> None:
+            _ = backend_name, master_key
+
+        def set_sdm_enabled(
+            self,
+            *,
+            enabled: bool,
+            url_template: str | None,
+            cmd_ctr: int,
+        ) -> None:
+            _ = enabled, url_template
+            calls.append(cmd_ctr)
+
+    monkeypatch.setattr("schnee.services.ntag_profile.Ntag424", FakeNtag424)
+
+    SetNtag424SdmService.call(
+        SetNtag424SdmService.Request(
+            backend_name="pcsc:Reader A",
+            master_key=bytes(16),
+            enabled=False,
+        ),
+    )
+
+    assert calls == [0]
 
 
 def test_validate_ntag424_keys_service_authenticates_expected_key(
