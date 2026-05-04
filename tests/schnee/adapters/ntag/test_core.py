@@ -8,18 +8,44 @@ from Crypto.Hash import CMAC
 from Crypto.Util.Padding import pad
 
 from schnee.adapters.backend.pcsc import PcscBackend
+from schnee.adapters.ntag.apdu import CommandAPDU, ResponseAPDU
 from schnee.adapters.ntag.core import Ntag424, Ntag424Key, Session
 
 if TYPE_CHECKING:
-    from schnee.adapters.backend.pcsc import PcscApduClient
+    from schnee.adapters.backend.contracts import ProfileReaderBackend
 
+GET_KEY_VERSION_INS = 0x64
+EXPECTED_KEY_VERSION = 0x11
 SHORT_CHANGE_KEY_APDU_LENGTH = 47
+
+
+class FakeApduClient:
+    """Fake APDU client for key validation tests."""
+
+    def __init__(self, *, key_versions: dict[int, int] | None = None) -> None:
+        self.commands: list[list[int]] = []
+        self.key_versions = key_versions or {}
+
+    def send_apdu(
+        self,
+        command: CommandAPDU | list[int],
+        *,
+        check_status: bool = True,
+        ok_statuses: tuple[tuple[int, int], ...] | None = None,
+    ) -> ResponseAPDU:
+        """Record commands and return configured GetKeyVersion responses."""
+        _ = check_status, ok_statuses
+        command = command.to_list() if isinstance(command, CommandAPDU) else command
+        self.commands.append(command)
+        if command[1] == GET_KEY_VERSION_INS:
+            return ResponseAPDU(data=[self.key_versions[command[5]]], sw1=0x90, sw2=0)
+        return ResponseAPDU(data=[], sw1=0x90, sw2=0)
 
 
 def test_session_requires_explicit_master_key() -> None:
     """Session construction fails unless the caller supplies the master key."""
     with pytest.raises(Session.SessionError, match="master_key"):
-        Session(connection=cast("PcscApduClient", object()))
+        Session(connection=cast("ProfileReaderBackend", object()))
 
 
 def test_ntag424_requires_explicit_master_key_before_reader_lookup() -> None:
@@ -58,8 +84,52 @@ def test_ntag424_accepts_explicit_factory_default_key(
     )
 
     assert ntag.backend is backend
-    assert ntag.connection is backend.client
+    assert ntag.connection is backend
     assert ntag.session.master_key == Ntag424.FACTORY_DEFAULT_KEY
+
+
+def test_validate_keys_authenticates_expected_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Key validation succeeds when authentication and key version match."""
+    client = FakeApduClient(key_versions={2: EXPECTED_KEY_VERSION})
+    backend = object.__new__(PcscBackend)
+    backend.client = client
+
+    def get_backend(_name: str) -> PcscBackend:
+        return backend
+
+    monkeypatch.setattr(
+        "schnee.adapters.ntag.core.Backend.get",
+        get_backend,
+    )
+
+    def authenticate_ev2_first(self: Session) -> tuple[bytes, bytes, bytes, bytes]:
+        assert self.key_no == int(Ntag424Key.APP_KEY_2)
+        assert self.master_key == bytes.fromhex("11" * 16)
+        assert client.commands[-1] == [0x90, 0x64, 0x00, 0x00, 0x01, 0x02, 0x00]
+        return bytes(16), bytes(16), bytes(4), bytes(16)
+
+    monkeypatch.setattr(
+        "schnee.adapters.ntag.core.Session.authenticate_ev2_first",
+        authenticate_ev2_first,
+    )
+
+    results = Ntag424.validate_keys(
+        backend_name="pcsc:Reader A",
+        keys=[
+            Ntag424.KeyValidation(
+                key_no=Ntag424Key.APP_KEY_2,
+                key=bytes.fromhex("11" * 16),
+                key_version=EXPECTED_KEY_VERSION,
+            ),
+        ],
+    )
+
+    assert results[0].valid is True
+    assert results[0].authenticated is True
+    assert results[0].actual_key_version == EXPECTED_KEY_VERSION
+    assert results[0].key_version_matches is True
 
 
 def test_change_key_crc32_fcs_matches_ntag_example() -> None:

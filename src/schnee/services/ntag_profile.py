@@ -70,14 +70,29 @@ class Ntag424KeyUpdateRequest(Service.Request):
             raise self.MissingOldKeyError(msg)
         return self
 
-    def to_adapter_update(self) -> Ntag424.KeyUpdate:
-        """Convert the request model into an adapter key update."""
-        return Ntag424.KeyUpdate(
-            key_no=self.key_no,
-            new_key=self.new_key,
-            key_version=self.key_version,
-            old_key=self.old_key,
-        )
+
+class Ntag424KeyValidationRequest(Service.Request):
+    """Request item for validating one NTAG 424 DNA application key."""
+
+    key_no: Ntag424Key = Field(description="Application key number to validate")
+    key: bytes = Field(description="Expected AES-128 key bytes")
+    key_version: int | None = Field(
+        default=None,
+        ge=0,
+        le=0xFF,
+        description="Optional expected one-byte key version stored with the key.",
+    )
+
+    class InvalidKeyLengthError(ValueError):
+        """Raised when a supplied AES key is not 16 bytes."""
+
+    @model_validator(mode="after")
+    def validate_key(self) -> Self:
+        """Validate NTAG 424 key validation constraints."""
+        if len(self.key) != AES_KEY_SIZE:
+            msg = "key must be 16 bytes"
+            raise self.InvalidKeyLengthError(msg)
+        return self
 
 
 class UpdateNtag424KeysService(Service[None]):
@@ -138,6 +153,50 @@ class UpdateNtag424KeysService(Service[None]):
                 for update in self.req.updates
             ],
             cmd_ctr_start=self.req.cmd_ctr_start,
+        )
+
+
+class ValidateNtag424KeysService(Service[list[Ntag424.KeyValidationResult]]):
+    """Validate NTAG 424 DNA application keys by authenticating with them."""
+
+    class Request(Service.Request):
+        """Request for validating one or more NTAG 424 DNA keys."""
+
+        backend_name: str = Field(
+            description="Backend name, for example `pcsc` or `pcsc:<reader name>`.",
+        )
+        keys: list[Ntag424KeyValidationRequest] = Field(
+            min_length=1,
+            max_length=5,
+            description="Expected keys to validate against the tag.",
+        )
+
+        class DuplicateKeyValidationError(ValueError):
+            """Raised when the same key slot is requested more than once."""
+
+        @model_validator(mode="after")
+        def validate_request(self) -> Self:
+            """Validate service request constraints."""
+            key_numbers = [key.key_no for key in self.keys]
+            if len(key_numbers) != len(set(key_numbers)):
+                msg = "keys must not contain duplicate key_no values"
+                raise self.DuplicateKeyValidationError(msg)
+            return self
+
+    req: Request
+
+    def process(self) -> list[Ntag424.KeyValidationResult]:
+        """Validate requested NTAG 424 DNA application keys."""
+        return Ntag424.validate_keys(
+            backend_name=self.req.backend_name,
+            keys=[
+                Ntag424.KeyValidation(
+                    key_no=key.key_no,
+                    key=key.key,
+                    key_version=key.key_version,
+                )
+                for key in self.req.keys
+            ],
         )
 
 

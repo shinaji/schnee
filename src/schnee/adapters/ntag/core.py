@@ -1,11 +1,13 @@
 import binascii
 from enum import IntEnum
+from typing import TYPE_CHECKING
 
 from Crypto.Cipher import AES
 from Crypto.Hash import CMAC
 from Crypto.Random import get_random_bytes
 from Crypto.Util.Padding import pad
 from pydantic import BaseModel, ConfigDict, Field
+from smartcard.Exceptions import CardConnectionException
 from smartcard.util import toHexString
 
 from schnee.adapters.backend.core import Backend
@@ -20,9 +22,18 @@ from schnee.adapters.ntag.utils import (
 )
 from schnee.utils.logger import get_logger
 
+if TYPE_CHECKING:
+    from schnee.adapters.backend.contracts import ProfileReaderBackend
+
 _logger = get_logger(__name__)
 
 KEY_VERSION_MAX = 0xFF
+APDU_VALIDATION_ERRORS = (
+    CardConnectionException,
+    PcscApduClient.PcscApduClientError,
+    PcscBackend.PcscBackendError,
+    RuntimeError,
+)
 
 
 class Ntag424Key(IntEnum):
@@ -43,7 +54,7 @@ class Session:
 
     def __init__(
         self,
-        connection: PcscApduClient,
+        connection: ProfileReaderBackend,
         key_no: int = 0x00,
         master_key: bytes | None = None,
     ) -> None:
@@ -201,6 +212,53 @@ class Ntag424:
             ),
         )
 
+    class KeyValidation(BaseModel):
+        """One NTAG 424 DNA application-key validation."""
+
+        model_config = ConfigDict(frozen=True)
+
+        key_no: Ntag424Key = Field(
+            description="Application key number to validate.",
+        )
+        key: bytes = Field(
+            description="Expected AES-128 key bytes for the selected key slot.",
+        )
+        key_version: int | None = Field(
+            default=None,
+            ge=0,
+            le=KEY_VERSION_MAX,
+            description="Optional expected one-byte key version stored with the key.",
+        )
+
+    class KeyValidationResult(BaseModel):
+        """Result for one NTAG 424 DNA application-key validation."""
+
+        model_config = ConfigDict(frozen=True)
+
+        key_no: Ntag424Key = Field(
+            description="Application key number that was checked.",
+        )
+        valid: bool = Field(description="Whether all requested checks passed.")
+        authenticated: bool = Field(
+            description="Whether AuthenticateEV2First succeeded with the expected key.",
+        )
+        expected_key_version: int | None = Field(
+            default=None,
+            description="Expected key version requested by the caller.",
+        )
+        actual_key_version: int | None = Field(
+            default=None,
+            description="Key version returned by GetKeyVersion.",
+        )
+        key_version_matches: bool | None = Field(
+            default=None,
+            description="Whether actual_key_version equals expected_key_version.",
+        )
+        error: str | None = Field(
+            default=None,
+            description="Validation error details when a check fails.",
+        )
+
     class Ntag424Error(Exception):
         """Base exception for NTAG 424 helper errors."""
 
@@ -231,7 +289,7 @@ class Ntag424:
         if not isinstance(self.backend, PcscBackend):
             msg = "Ntag424 requires a PC/SC backend"
             raise self.UnsupportedBackendError(msg)
-        self.connection = self.backend.client
+        self.connection = self.backend
         self.session = Session(
             connection=self.connection,
             key_no=0x00,
@@ -279,6 +337,90 @@ class Ntag424:
             )
             self.connection.send_apdu(apdu)
             cmd_ctr += 1
+
+    @classmethod
+    def validate_keys(
+        cls,
+        *,
+        backend_name: str,
+        keys: list[KeyValidation],
+    ) -> list[KeyValidationResult]:
+        """Validate NTAG 424 DNA keys by authenticating with each expected key."""
+        backend = Backend.get(backend_name)
+        if not isinstance(backend, PcscBackend):
+            msg = "Ntag424 requires a PC/SC backend"
+            raise cls.UnsupportedBackendError(msg)
+
+        return [cls._validate_key(backend=backend, expected=key) for key in keys]
+
+    @classmethod
+    def _validate_key(
+        cls,
+        *,
+        backend: ProfileReaderBackend,
+        expected: KeyValidation,
+    ) -> KeyValidationResult:
+        cls._validate_key_bytes("key", expected.key)
+        if (
+            expected.key_version is not None
+            and not 0 <= expected.key_version <= cls.byte_max
+        ):
+            msg = "key_version must be between 0 and 255"
+            raise cls.InvalidKeyVersionError(msg)
+
+        authenticated = False
+        actual_key_version: int | None = None
+        key_version_matches: bool | None = None
+
+        try:
+            backend.send_apdu(Ntag424ApduPreset.select_application())
+        except APDU_VALIDATION_ERRORS as exc:
+            authenticated = False
+            error = str(exc)
+            key_version_matches = False if expected.key_version is not None else None
+        else:
+            error = None
+
+        if error is None and expected.key_version is not None:
+            try:
+                data = backend.send_apdu(
+                    Ntag424ApduPreset.get_key_version(
+                        int(expected.key_no),
+                    ),
+                ).data
+            except APDU_VALIDATION_ERRORS as exc:
+                key_version_matches = False
+                error = str(exc)
+            else:
+                if len(data) != 1:
+                    key_version_matches = False
+                    error = "NTAG 424 DNA key version response must be 1 byte"
+                else:
+                    actual_key_version = data[0]
+                    key_version_matches = actual_key_version == expected.key_version
+
+        if error is None:
+            try:
+                Session(
+                    connection=backend,
+                    key_no=int(expected.key_no),
+                    master_key=expected.key,
+                ).authenticate_ev2_first()
+                authenticated = True
+            except APDU_VALIDATION_ERRORS as exc:
+                authenticated = False
+                error = str(exc)
+
+        valid = authenticated and key_version_matches is not False
+        return cls.KeyValidationResult(
+            key_no=expected.key_no,
+            valid=valid,
+            authenticated=authenticated,
+            expected_key_version=expected.key_version,
+            actual_key_version=actual_key_version,
+            key_version_matches=key_version_matches,
+            error=error,
+        )
 
     @classmethod
     def build_change_key_apdu(
