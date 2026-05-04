@@ -172,9 +172,19 @@ class Ntag424:
             key_no=0x00,
             master_key=master_key,
         )
+
+    def connect(self) -> None:
+        """Select the NTAG 424 DNA application."""
         self._apdu_select()
-        k_ses_auth_enc, k_ses_auth_mac, ti, _iv = self.session.authenticate_ev2_first()
-        url = f"https://www.yahoo.co.jp/u={'U' * 32}&c={'C' * 6}&m={'M' * 16}"
+
+    def authenticate(self) -> tuple[bytes, bytes, bytes, bytes]:
+        """Authenticate and return derived EV2 session values."""
+        return self.session.authenticate_ev2_first()
+
+    def configure_sdm_url(self, url: str, *, cmd_ctr: int = 1) -> None:
+        """Authenticate, write an NDEF URL, and enable SDM explicitly."""
+        self.connect()
+        k_ses_auth_enc, k_ses_auth_mac, ti, _iv = self.authenticate()
         self.write_ndef_url(
             url_string=url,
         )
@@ -183,7 +193,7 @@ class Ntag424:
             session_key_enc=k_ses_auth_enc,
             session_key_mac=k_ses_auth_mac,
             ti=ti,
-            cmd_ctr=1,
+            cmd_ctr=cmd_ctr,
             offset=offset,
         )
 
