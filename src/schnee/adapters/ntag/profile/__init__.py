@@ -1,5 +1,6 @@
 """High-level tag profile editor API for NTAG devices."""
 
+from .converters import Ntag424ProfileSections
 from .editor import TagProfileBackend, TagProfileEditor
 from .fields import (
     EditableField,
@@ -8,14 +9,19 @@ from .fields import (
 )
 from .models import (
     AccessProfile,
+    BaseTagProfile,
     LockProfile,
     NdefProfile,
     NdefRecord,
+    Ntag21xProfile,
+    Ntag424DnaProfile,
+    NtagProfile,
     SdmProfile,
     SecurityProfile,
     TagInfo,
-    TagProfile,
+    TagType,
 )
+from .ndef import NdefProfileParser
 from .planning import (
     ChangeOperation,
     ChangePlan,

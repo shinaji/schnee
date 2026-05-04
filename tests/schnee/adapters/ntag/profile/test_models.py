@@ -5,14 +5,19 @@ import pytest
 from schnee.adapters.ntag.profile.models import (
     NdefProfile,
     NdefRecord,
+    Ntag21xProfile,
+    Ntag424DnaProfile,
     SdmProfile,
-    TagProfile,
+    TagInfo,
 )
+
+NTAG215_NDEF_CAPACITY_BYTES = 496
 
 
 def test_tag_profile_patch_updates_typed_profile_sections() -> None:
     """Profile patch applies typed section replacements."""
-    profile = TagProfile(
+    profile = Ntag424DnaProfile(
+        tag=TagInfo(type="NTAG424DNA", uid="04112233445566"),
         ndef=NdefProfile(
             records=[
                 NdefRecord(type="url", value="https://example.com"),
@@ -35,6 +40,25 @@ def test_tag_profile_patch_updates_typed_profile_sections() -> None:
     assert updated.ndef.records[0].value == "https://example.com"
 
 
+def test_ntag21x_profile_patch_preserves_capacity() -> None:
+    """NTAG21x patch keeps required capacity metadata."""
+    profile = Ntag21xProfile(
+        tag=TagInfo(type="NTAG215", uid="04112233445566"),
+        capacity_bytes=NTAG215_NDEF_CAPACITY_BYTES,
+    )
+
+    updated = profile.patch(
+        ndef=NdefProfile(
+            records=[
+                NdefRecord(type="url", value="https://example.com"),
+            ],
+        ),
+    )
+
+    assert updated.capacity_bytes == NTAG215_NDEF_CAPACITY_BYTES
+    assert updated.ndef.records[0].value == "https://example.com"
+
+
 def test_sdm_enabled_requires_at_least_one_mirror() -> None:
     """Enabled SDM requires at least one mirrored value."""
     with pytest.raises(SdmProfile.SdmMirrorRequiredError, match="enabled SDM"):
@@ -42,8 +66,9 @@ def test_sdm_enabled_requires_at_least_one_mirror() -> None:
 
 
 def test_tag_profile_plan_changes_delegates_to_planning() -> None:
-    """TagProfile can plan changes from itself to another profile."""
-    current = TagProfile(
+    """Ntag424DnaProfile can plan changes from itself to another profile."""
+    current = Ntag424DnaProfile(
+        tag=TagInfo(type="NTAG424DNA", uid="04112233445566"),
         ndef=NdefProfile(
             records=[
                 NdefRecord(type="url", value="https://example.com"),

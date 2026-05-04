@@ -1,4 +1,4 @@
-"""Tests for APDU models."""
+"""Tests for core APDU models."""
 
 import pytest
 from pydantic import ValidationError

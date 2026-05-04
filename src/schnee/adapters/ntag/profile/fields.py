@@ -6,8 +6,10 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
+from .models import Ntag21xProfile, Ntag424DnaProfile
+
 if TYPE_CHECKING:
-    from .models import TagProfile
+    from .models import NtagProfile
 
 
 FieldKind = Literal["boolean", "choice", "hex", "integer", "secret", "string", "url"]
@@ -46,8 +48,38 @@ class EditableField(BaseModel):
     )
 
 
-def build_editable_fields(profile: TagProfile) -> list[EditableField]:
+def build_editable_fields(profile: NtagProfile) -> list[EditableField]:
     """Build editable field descriptors from a tag profile."""
+    if isinstance(profile, Ntag21xProfile):
+        return _build_ntag21x_editable_fields(profile)
+    if isinstance(profile, Ntag424DnaProfile):
+        return _build_ntag424dna_editable_fields(profile)
+    msg = f"Unsupported tag profile type: {type(profile).__name__}"
+    raise TypeError(msg)
+
+
+def _build_ntag21x_editable_fields(profile: Ntag21xProfile) -> list[EditableField]:
+    """Build editable field descriptors for NTAG21x profiles."""
+    ndef_record = profile.ndef.records[0] if profile.ndef.records else None
+    ndef_value = ndef_record.value if ndef_record else ""
+    ndef_kind = "url" if ndef_record is None or ndef_record.type == "url" else "string"
+
+    return [
+        EditableField(
+            path="ndef.records[0].value",
+            label="NDEF URL",
+            kind=ndef_kind,
+            value=ndef_value,
+            writable=True,
+            required=True,
+        ),
+    ]
+
+
+def _build_ntag424dna_editable_fields(
+    profile: Ntag424DnaProfile,
+) -> list[EditableField]:
+    """Build editable field descriptors for NTAG 424 DNA profiles."""
     ndef_record = profile.ndef.records[0] if profile.ndef.records else None
     ndef_value = ndef_record.value if ndef_record else ""
     ndef_kind = "url" if ndef_record is None or ndef_record.type == "url" else "string"

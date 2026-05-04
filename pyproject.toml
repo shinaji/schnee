@@ -3,6 +3,14 @@ name = "schnee"
 version = "0.1.0"
 description = "NFC/RFID tag authentication and encryption library"
 requires-python = ">=3.14, <3.15"
+authors = [
+    { name = "shinaji" },
+]
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+]
 dependencies = [
     "pycryptodome>=3.23.0,<4",
     "pydantic>=2.12.5,<3",

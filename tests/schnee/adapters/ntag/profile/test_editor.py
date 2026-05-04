@@ -6,8 +6,9 @@ from schnee.adapters.ntag.profile.editor import TagProfileEditor
 from schnee.adapters.ntag.profile.models import (
     NdefProfile,
     NdefRecord,
+    Ntag424DnaProfile,
     SdmProfile,
-    TagProfile,
+    TagInfo,
 )
 from schnee.adapters.ntag.profile.planning import ChangePlan
 
@@ -15,15 +16,15 @@ from schnee.adapters.ntag.profile.planning import ChangePlan
 class MemoryProfileBackend:
     """In-memory profile backend used by editor tests."""
 
-    def __init__(self, profile: TagProfile) -> None:
+    def __init__(self, profile: Ntag424DnaProfile) -> None:
         self.profile = profile
         self.applied_plan: ChangePlan | None = None
 
-    def read_profile(self) -> TagProfile:
+    def read_profile(self) -> Ntag424DnaProfile:
         """Read the current memory profile."""
         return self.profile
 
-    def apply_plan(self, plan: ChangePlan) -> TagProfile:
+    def apply_plan(self, plan: ChangePlan) -> Ntag424DnaProfile:
         """Apply a plan by returning the requested operation snapshots."""
         self.applied_plan = plan
         for operation in plan.operations:
@@ -40,7 +41,8 @@ class MemoryProfileBackend:
 
 def test_tag_profile_editor_reads_plans_and_applies() -> None:
     """Editor coordinates backend read, plan, and apply."""
-    profile = TagProfile(
+    profile = Ntag424DnaProfile(
+        tag=TagInfo(type="NTAG424DNA", uid="04112233445566"),
         ndef=NdefProfile(
             records=[
                 NdefRecord(type="url", value="https://example.com"),
@@ -68,7 +70,13 @@ def test_tag_profile_editor_reads_plans_and_applies() -> None:
 
 def test_tag_profile_editor_rejects_invalid_plan() -> None:
     """Editor refuses to apply invalid plans."""
-    editor = TagProfileEditor(MemoryProfileBackend(TagProfile()))
+    editor = TagProfileEditor(
+        MemoryProfileBackend(
+            Ntag424DnaProfile(
+                tag=TagInfo(type="NTAG424DNA", uid="04112233445566"),
+            ),
+        ),
+    )
 
     with pytest.raises(TagProfileEditor.InvalidChangePlanError, match="broken"):
         editor.apply(ChangePlan(valid=False, errors=["broken"]))
