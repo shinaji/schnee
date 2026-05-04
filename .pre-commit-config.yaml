@@ -1,9 +1,18 @@
 repos:
   - repo: local
     hooks:
-      - id: nox
-        name: Run Nox
+      - id: nox-pre-commit
+        name: Run Nox pre-commit hook
         entry: uv run nox -s lint type_check --
         language: system
         types: [python]
         pass_filenames: true
+        stages: ["pre-commit"]
+
+      - id: nox-pre-push
+        name: Run Nox pre-push hook
+        entry: uv run nox -s test --
+        language: system
+        types: [python]
+        pass_filenames: true
+        stages: ["pre-push"]
