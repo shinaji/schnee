@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
+import pytest
 from smartcard.Exceptions import CardConnectionException
 
 from schnee.adapters.backend import PcscBackend
 from schnee.adapters.backend.pcsc import PcscReaderProvider
 from schnee.adapters.ntag.apdu import CommandAPDU
 from schnee.adapters.ntag.profile import Ntag21xProfile, Ntag424DnaProfile
-
-if TYPE_CHECKING:
-    import pytest
 
 NTAG215_NDEF_CAPACITY_BYTES = 496
 
