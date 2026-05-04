@@ -40,12 +40,13 @@ class Ntag424ApduPreset:
         df_name: list[Byte] | None = None,
     ) -> CommandAPDU:
         """Build a SELECT command for the NTAG 424 DNA application DF name."""
+        data = Ntag424ApduPreset.application_df_name if df_name is None else df_name
         return CommandAPDU(
             cla=0x00,
             ins=0xA4,
             p1=0x04,
             p2=0x00,
-            data=df_name or Ntag424ApduPreset.application_df_name,
+            data=data,
         )
 
     @staticmethod

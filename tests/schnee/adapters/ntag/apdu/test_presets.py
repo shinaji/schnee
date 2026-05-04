@@ -37,6 +37,12 @@ def test_ntag424_apdu_presets_serialize_commands() -> None:
         0x01,
         0x01,
     ]
+    assert Ntag424ApduPreset.select_application(df_name=[]).to_list() == [
+        0x00,
+        0xA4,
+        0x04,
+        0x00,
+    ]
     assert Ntag424ApduPreset.authenticate_ev2_first(0x00).to_list() == [
         0x90,
         0x71,
