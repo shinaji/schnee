@@ -1,13 +1,17 @@
 """Services for NTAG profile operations."""
 
 import sys
+from typing import Self
 
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field, model_validator
 
 from schnee.adapters.backend import PcscBackend
 from schnee.adapters.backend.core import Backend
+from schnee.adapters.ntag.core import Ntag424, Ntag424Key
 from schnee.adapters.ntag.profile import NtagProfile
 from schnee.services.base import Service
+
+AES_KEY_SIZE = 16
 
 
 class ReadNtagProfileService(Service[NtagProfile]):
@@ -22,6 +26,119 @@ class ReadNtagProfileService(Service[NtagProfile]):
         """Read the current NTAG profile."""
         backend = Backend.get(name="pcsc")
         return backend.read_profile()
+
+
+class Ntag424KeyUpdateRequest(Service.Request):
+    """Request item for one NTAG 424 DNA application-key update."""
+
+    key_no: Ntag424Key = Field(description="Application key number to update")
+    new_key: bytes = Field(description="New AES-128 key bytes")
+    key_version: int = Field(
+        default=0,
+        ge=0,
+        le=0xFF,
+        description="New one-byte key version stored with the key.",
+    )
+    old_key: bytes | None = Field(
+        default=None,
+        description=(
+            "Current key bytes. Required for key 1..4 ChangeKey cryptograms. "
+            "Use Ntag424.FACTORY_DEFAULT_KEY for factory-default app keys."
+        ),
+    )
+
+    class InvalidKeyLengthError(ValueError):
+        """Raised when a supplied AES key is not 16 bytes."""
+
+    class MissingOldKeyError(ValueError):
+        """Raised when a non-master key update does not include the old key."""
+
+    @model_validator(mode="after")
+    def validate_update(self) -> Self:
+        """Validate NTAG 424 ChangeKey constraints."""
+        if len(self.new_key) != AES_KEY_SIZE:
+            msg = "new_key must be 16 bytes"
+            raise self.InvalidKeyLengthError(msg)
+        if self.old_key is not None and len(self.old_key) != AES_KEY_SIZE:
+            msg = "old_key must be 16 bytes"
+            raise self.InvalidKeyLengthError(msg)
+        if self.key_no is not Ntag424Key.APP_MASTER and self.old_key is None:
+            msg = (
+                "old_key is required when changing key 1..4; "
+                "use Ntag424.FACTORY_DEFAULT_KEY for factory-default app keys"
+            )
+            raise self.MissingOldKeyError(msg)
+        return self
+
+    def to_adapter_update(self) -> Ntag424.KeyUpdate:
+        """Convert the request model into an adapter key update."""
+        return Ntag424.KeyUpdate(
+            key_no=self.key_no,
+            new_key=self.new_key,
+            key_version=self.key_version,
+            old_key=self.old_key,
+        )
+
+
+class UpdateNtag424KeysService(Service[None]):
+    """Update NTAG 424 DNA application keys 0 through 4.
+
+    Use `Ntag424.FACTORY_DEFAULT_KEY` explicitly when updating a factory-default tag.
+    """
+
+    class Request(Service.Request):
+        """Request for updating one or more NTAG 424 DNA keys."""
+
+        backend_name: str = Field(
+            description="Backend name, for example `pcsc` or `pcsc:<reader name>`.",
+        )
+        master_key: bytes = Field(description="Current application master key")
+        updates: list[Ntag424KeyUpdateRequest] = Field(
+            min_length=1,
+            max_length=5,
+            description="Key updates to apply. Key 0 is applied last.",
+        )
+        cmd_ctr_start: int = Field(default=0, ge=0, le=0xFFFF)
+
+        class InvalidMasterKeyLengthError(ValueError):
+            """Raised when the application master key is not 16 bytes."""
+
+        class DuplicateKeyUpdateError(ValueError):
+            """Raised when the same key slot is requested more than once."""
+
+        @model_validator(mode="after")
+        def validate_request(self) -> Self:
+            """Validate service request constraints."""
+            if len(self.master_key) != AES_KEY_SIZE:
+                msg = "master_key must be 16 bytes"
+                raise self.InvalidMasterKeyLengthError(msg)
+
+            key_numbers = [update.key_no for update in self.updates]
+            if len(key_numbers) != len(set(key_numbers)):
+                msg = "updates must not contain duplicate key_no values"
+                raise self.DuplicateKeyUpdateError(msg)
+            return self
+
+    req: Request
+
+    def process(self) -> None:
+        """Update requested NTAG 424 DNA application keys."""
+        ntag = Ntag424(
+            backend_name=self.req.backend_name,
+            master_key=self.req.master_key,
+        )
+        ntag.update_keys(
+            [
+                Ntag424.KeyUpdate(
+                    key_no=update.key_no,
+                    new_key=update.new_key,
+                    key_version=update.key_version,
+                    old_key=update.old_key,
+                )
+                for update in self.req.updates
+            ],
+            cmd_ctr_start=self.req.cmd_ctr_start,
+        )
 
 
 def main() -> int:

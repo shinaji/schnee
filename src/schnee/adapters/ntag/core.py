@@ -1,12 +1,15 @@
 import binascii
+from enum import IntEnum
 
 from Crypto.Cipher import AES
 from Crypto.Hash import CMAC
 from Crypto.Random import get_random_bytes
 from Crypto.Util.Padding import pad
+from pydantic import BaseModel, ConfigDict, Field
 from smartcard.util import toHexString
 
-from schnee.adapters.backend.pcsc import PcscApduClient, PcscReaderProvider
+from schnee.adapters.backend.core import Backend
+from schnee.adapters.backend.pcsc import PcscApduClient, PcscBackend
 from schnee.adapters.ntag.apdu import Ntag424ApduPreset
 from schnee.adapters.ntag.crypt import aes_decrypt, aes_encrypt, xor_bytes
 from schnee.adapters.ntag.utils import (
@@ -18,6 +21,18 @@ from schnee.adapters.ntag.utils import (
 from schnee.utils.logger import get_logger
 
 _logger = get_logger(__name__)
+
+KEY_VERSION_MAX = 0xFF
+
+
+class Ntag424Key(IntEnum):
+    """NTAG 424 DNA application key numbers."""
+
+    APP_MASTER = 0x00
+    APP_KEY_1 = 0x01
+    APP_KEY_2 = 0x02
+    APP_KEY_3 = 0x03
+    APP_KEY_4 = 0x04
 
 
 class Session:
@@ -153,16 +168,70 @@ class Session:
 class Ntag424:
     """High-level helper for configuring NTAG 424 DNA tags."""
 
+    FACTORY_DEFAULT_KEY = bytes(16)
+    key_slots = 5
+    aes_key_size = 16
+    ti_size = 4
+    byte_max = KEY_VERSION_MAX
+    change_key_cmd = 0xC4
+
+    class KeyUpdate(BaseModel):
+        """One NTAG 424 DNA application-key update."""
+
+        model_config = ConfigDict(frozen=True)
+
+        key_no: Ntag424Key = Field(
+            description="Application key number to update.",
+        )
+        new_key: bytes = Field(
+            description="New AES-128 key bytes to write into the selected key slot.",
+        )
+        key_version: int = Field(
+            default=0,
+            ge=0,
+            le=KEY_VERSION_MAX,
+            description="New one-byte key version stored with the key.",
+        )
+        old_key: bytes | None = Field(
+            default=None,
+            description=(
+                "Current AES-128 key bytes. Required for key 1..4 ChangeKey "
+                "cryptograms; use Ntag424.FACTORY_DEFAULT_KEY for factory-default "
+                "app keys."
+            ),
+        )
+
+    class Ntag424Error(Exception):
+        """Base exception for NTAG 424 helper errors."""
+
+    class InvalidKeyNumberError(Ntag424Error):
+        """Raised when a key number is outside the NTAG 424 key range."""
+
+    class InvalidKeyLengthError(Ntag424Error):
+        """Raised when an AES key is not 16 bytes."""
+
+    class InvalidKeyVersionError(Ntag424Error):
+        """Raised when a key version is outside one byte."""
+
+    class MissingOldKeyError(Ntag424Error):
+        """Raised when a non-master key update does not include the old key."""
+
+    class UnsupportedBackendError(Ntag424Error):
+        """Raised when a backend cannot provide raw NTAG 424 APDU access."""
+
     def __init__(
         self,
-        name: str,
+        backend_name: str,
         master_key: bytes | None = None,
     ) -> None:
         if master_key is None:
             msg = "master_key must be provided explicitly"
             raise ValueError(msg)
-        self.reader = PcscReaderProvider.get(name)
-        self.connection = PcscApduClient(reader=self.reader)
+        self.backend = Backend.get(backend_name)
+        if not isinstance(self.backend, PcscBackend):
+            msg = "Ntag424 requires a PC/SC backend"
+            raise self.UnsupportedBackendError(msg)
+        self.connection = self.backend.client
         self.session = Session(
             connection=self.connection,
             key_no=0x00,
@@ -176,6 +245,143 @@ class Ntag424:
     def authenticate(self) -> tuple[bytes, bytes, bytes, bytes]:
         """Authenticate and return derived EV2 session values."""
         return self.session.authenticate_ev2_first()
+
+    def update_keys(
+        self,
+        updates: list[KeyUpdate],
+        *,
+        cmd_ctr_start: int = 0,
+    ) -> None:
+        """Authenticate with key 0 and update NTAG 424 DNA application keys.
+
+        Non-master keys are changed before key 0 because changing key 0 invalidates
+        the current authenticated session.
+        """
+        self.connect()
+        k_ses_auth_enc, k_ses_auth_mac, ti, _iv = self.authenticate()
+
+        cmd_ctr = cmd_ctr_start
+        for update in sorted(
+            updates,
+            key=lambda item: item.key_no is Ntag424Key.APP_MASTER,
+        ):
+            apdu = self.build_change_key_apdu(
+                update=update,
+                session_key_enc=k_ses_auth_enc,
+                session_key_mac=k_ses_auth_mac,
+                ti=ti,
+                cmd_ctr=cmd_ctr,
+            )
+            _logger.debug(
+                "ChangeKey key_no=%s: %s",
+                int(update.key_no),
+                toHexString(apdu),
+            )
+            self.connection.send_checked(apdu)
+            cmd_ctr += 1
+
+    @classmethod
+    def build_change_key_apdu(
+        cls,
+        *,
+        update: KeyUpdate,
+        session_key_enc: bytes,
+        session_key_mac: bytes,
+        ti: bytes,
+        cmd_ctr: int,
+    ) -> list[int]:
+        """Build a protected NTAG 424 DNA ChangeKey APDU."""
+        cls._validate_key_update(update)
+        cls._validate_key_bytes("session_key_enc", session_key_enc)
+        cls._validate_key_bytes("session_key_mac", session_key_mac)
+        if len(ti) != cls.ti_size:
+            msg = "ti must be 4 bytes"
+            raise ValueError(msg)
+
+        plain_key_data = cls._build_change_key_data(update)
+        iv = cls._change_key_iv(
+            session_key_enc=session_key_enc,
+            ti=ti,
+            cmd_ctr=cmd_ctr,
+        )
+        encrypted_key_data = cls.aes_cbc_encrypt_for_ev2(
+            session_key_enc=session_key_enc,
+            iv=iv,
+            plain_data=plain_key_data,
+        )
+        mac = cls._calculate_ev2_mac(
+            session_key_mac=session_key_mac,
+            cmd_code=cls.change_key_cmd,
+            cmd_ctr=cmd_ctr,
+            ti=ti,
+            file_no=bytes([int(update.key_no)]),
+            data=list(encrypted_key_data),
+        )
+        return Ntag424ApduPreset.change_key(
+            key_no=int(update.key_no),
+            encrypted_key_data=list(encrypted_key_data),
+            mac=list(mac),
+        ).to_list()
+
+    @classmethod
+    def _validate_key_update(cls, update: KeyUpdate) -> None:
+        cls._validate_key_bytes("new_key", update.new_key)
+        if not 0 <= update.key_version <= cls.byte_max:
+            msg = "key_version must be between 0 and 255"
+            raise cls.InvalidKeyVersionError(msg)
+        if update.key_no is not Ntag424Key.APP_MASTER and update.old_key is None:
+            msg = (
+                "old_key is required when changing key 1..4; "
+                "use Ntag424.FACTORY_DEFAULT_KEY for factory-default app keys"
+            )
+            raise cls.MissingOldKeyError(msg)
+        if update.old_key is not None:
+            cls._validate_key_bytes("old_key", update.old_key)
+
+    @classmethod
+    def _validate_key_bytes(cls, name: str, value: bytes) -> None:
+        if len(value) != cls.aes_key_size:
+            msg = f"{name} must be 16 bytes"
+            raise cls.InvalidKeyLengthError(msg)
+
+    @classmethod
+    def _build_change_key_data(cls, update: KeyUpdate) -> bytes:
+        """Build plaintext ChangeKey KeyData before EV2 encryption."""
+        if update.key_no is Ntag424Key.APP_MASTER:
+            return update.new_key + bytes([update.key_version])
+
+        if update.old_key is None:
+            msg = (
+                "old_key is required when changing key 1..4; "
+                "use Ntag424.FACTORY_DEFAULT_KEY for factory-default app keys"
+            )
+            raise cls.MissingOldKeyError(msg)
+
+        return (
+            xor_bytes(update.new_key, update.old_key)
+            + bytes([update.key_version])
+            + cls.change_key_crc32(update.new_key)
+        )
+
+    @staticmethod
+    def change_key_crc32(data: bytes) -> bytes:
+        """Return IEEE 802.3 FCS CRC32 bytes used by NTAG ChangeKey."""
+        return (binascii.crc32(data) ^ 0xFFFFFFFF).to_bytes(4, byteorder="little")
+
+    @classmethod
+    def _change_key_iv(
+        cls,
+        *,
+        session_key_enc: bytes,
+        ti: bytes,
+        cmd_ctr: int,
+    ) -> bytes:
+        iv_input = b"\xa5\x5a" + ti + cmd_ctr.to_bytes(2, byteorder="little") + bytes(8)
+        return cls.aes_cbc_encrypt_for_ev2(
+            session_key_enc=session_key_enc,
+            iv=None,
+            plain_data=iv_input,
+        )
 
     def configure_sdm_url(self, url: str, *, cmd_ctr: int = 1) -> None:
         """Authenticate, write an NDEF URL, and enable SDM explicitly."""
