@@ -5,10 +5,13 @@ import pytest
 from schnee.adapters.ntag.profile.models import (
     NdefProfile,
     NdefRecord,
+    Ntag21xProfile,
     Ntag424DnaProfile,
     SdmProfile,
     TagInfo,
 )
+
+NTAG215_NDEF_CAPACITY_BYTES = 496
 
 
 def test_tag_profile_patch_updates_typed_profile_sections() -> None:
@@ -34,6 +37,25 @@ def test_tag_profile_patch_updates_typed_profile_sections() -> None:
     assert updated.sdm.enabled is True
     assert updated.sdm.uid_mirror is True
     assert updated.sdm.template_url == "https://example.com/tap"
+    assert updated.ndef.records[0].value == "https://example.com"
+
+
+def test_ntag21x_profile_patch_preserves_capacity() -> None:
+    """NTAG21x patch keeps required capacity metadata."""
+    profile = Ntag21xProfile(
+        tag=TagInfo(type="NTAG215", uid="04112233445566"),
+        capacity_bytes=NTAG215_NDEF_CAPACITY_BYTES,
+    )
+
+    updated = profile.patch(
+        ndef=NdefProfile(
+            records=[
+                NdefRecord(type="url", value="https://example.com"),
+            ],
+        ),
+    )
+
+    assert updated.capacity_bytes == NTAG215_NDEF_CAPACITY_BYTES
     assert updated.ndef.records[0].value == "https://example.com"
 
 

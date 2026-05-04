@@ -182,6 +182,7 @@ class Ntag21xProfile(BaseTagProfile):
             {
                 "tag": tag or self.tag,
                 "ndef": ndef or self.ndef,
+                "capacity_bytes": self.capacity_bytes,
             },
         )
 
