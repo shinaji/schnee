@@ -159,7 +159,11 @@ class PcscBackend:
             offset=2,
             length=ndef_length,
         )
-        return NdefProfile(records=NdefProfileParser.parse_message(message))
+        try:
+            records = NdefProfileParser.parse_message(message)
+        except NdefProfileParser.NdefParseError as exc:
+            raise self.NdefParseError(str(exc)) from exc
+        return NdefProfile(records=records)
 
     def _read_data_file(self, *, file_no: int, offset: int, length: int) -> list[int]:
         """Read bytes from an NTAG 424 DNA data file."""
