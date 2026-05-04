@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field, HttpUrl, model_validator
 if TYPE_CHECKING:
     from .planning import ChangePlan
 
+TagType = Literal["NTAG213", "NTAG215", "NTAG216", "NTAG424DNA"]
+
 
 class NdefRecord(BaseModel):
     """Editable NDEF record."""
@@ -27,20 +29,8 @@ class NdefRecord(BaseModel):
 class TagInfo(BaseModel):
     """Static tag metadata."""
 
-    type: Literal["NTAG424DNA"] = Field(
-        default="NTAG424DNA",
-        description="Detected NTAG product family",
-    )
-    uid: str | None = Field(default=None, description="Tag UID as uppercase hex")
-    capacity_bytes: int | None = Field(
-        default=None,
-        ge=0,
-        description="Usable tag storage capacity in bytes",
-    )
-    features: list[str] = Field(
-        default_factory=list,
-        description="High-level features supported by the tag",
-    )
+    type: TagType = Field(description="Detected NTAG product family")
+    uid: str = Field(description="Tag UID as uppercase hex")
 
 
 class NdefProfile(BaseModel):
@@ -163,17 +153,42 @@ class LockProfile(BaseModel):
     )
 
 
-class TagProfile(BaseModel):
-    """Editable profile representation of an NTAG."""
+class BaseTagProfile(BaseModel):
+    """Common profile representation shared by supported NTAG families."""
 
-    tag: TagInfo = Field(
-        default_factory=TagInfo,
-        description="Static tag identity and capability metadata",
-    )
+    tag: TagInfo = Field(description="Static tag identity and capability metadata")
     ndef: NdefProfile = Field(
         default_factory=NdefProfile,
         description="Editable NDEF content profile",
     )
+
+
+class Ntag21xProfile(BaseTagProfile):
+    """Editable profile representation of an NTAG21x Type 2 tag."""
+
+    capacity_bytes: int = Field(
+        ge=0,
+        description="Usable Type 2 Tag storage capacity in bytes",
+    )
+
+    def patch(
+        self,
+        *,
+        tag: TagInfo | None = None,
+        ndef: NdefProfile | None = None,
+    ) -> Self:
+        """Return a validated copy with NTAG21x profile section replacements."""
+        return self.model_validate(
+            {
+                "tag": tag or self.tag,
+                "ndef": ndef or self.ndef,
+            },
+        )
+
+
+class Ntag424DnaProfile(BaseTagProfile):
+    """Editable profile representation of an NTAG 424 DNA tag."""
+
     sdm: SdmProfile = Field(
         default_factory=SdmProfile,
         description="Secure Dynamic Messaging configuration profile",
@@ -218,3 +233,6 @@ class TagProfile(BaseModel):
         from .planning import plan_profile_changes  # noqa: PLC0415
 
         return plan_profile_changes(self, requested)
+
+
+NtagProfile = Ntag424DnaProfile | Ntag21xProfile

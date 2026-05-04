@@ -5,17 +5,36 @@ from schnee.adapters.ntag.profile.models import (
     LockProfile,
     NdefProfile,
     NdefRecord,
+    Ntag424DnaProfile,
     SdmProfile,
     SecurityProfile,
     TagInfo,
-    TagProfile,
 )
 from schnee.adapters.ntag.profile.planning import plan_profile_changes
 
 
+def make_ntag424_profile(
+    *,
+    ndef: NdefProfile | None = None,
+    sdm: SdmProfile | None = None,
+    access: AccessProfile | None = None,
+    security: SecurityProfile | None = None,
+    locks: LockProfile | None = None,
+) -> Ntag424DnaProfile:
+    """Build an NTAG 424 DNA profile with explicit tag metadata."""
+    return Ntag424DnaProfile(
+        tag=TagInfo(type="NTAG424DNA", uid="04112233445566"),
+        ndef=ndef or NdefProfile(),
+        sdm=sdm or SdmProfile(),
+        access=access or AccessProfile(),
+        security=security or SecurityProfile(),
+        locks=locks or LockProfile(),
+    )
+
+
 def test_plan_profile_changes_detects_ndef_and_sdm_operations() -> None:
     """Planning returns operations, auth needs, and SDM warnings."""
-    current = TagProfile(
+    current = make_ntag424_profile(
         ndef=NdefProfile(
             records=[
                 NdefRecord(type="url", value="https://example.com"),
@@ -55,7 +74,7 @@ def test_plan_profile_changes_detects_ndef_and_sdm_operations() -> None:
 
 def test_plan_profile_changes_blocks_ndef_updates_on_locked_tag() -> None:
     """Planning rejects NDEF writes when permanent locks are present."""
-    current = TagProfile(
+    current = make_ntag424_profile(
         ndef=NdefProfile(
             records=[
                 NdefRecord(type="url", value="https://example.com"),
@@ -82,7 +101,7 @@ def test_plan_profile_changes_blocks_ndef_updates_on_locked_tag() -> None:
 
 def test_plan_profile_changes_marks_ndef_write_auth_requirement() -> None:
     """NDEF writes require authentication when access policy requires it."""
-    current = TagProfile(
+    current = make_ntag424_profile(
         ndef=NdefProfile(
             records=[
                 NdefRecord(type="url", value="https://example.com"),
@@ -107,7 +126,7 @@ def test_plan_profile_changes_marks_ndef_write_auth_requirement() -> None:
 
 def test_plan_profile_changes_detects_access_updates() -> None:
     """Access updates are dangerous authenticated operations."""
-    current = TagProfile()
+    current = make_ntag424_profile()
     requested = current.patch(
         access=AccessProfile(ndef_write="free"),
     )
@@ -123,7 +142,7 @@ def test_plan_profile_changes_detects_access_updates() -> None:
 
 def test_plan_profile_changes_detects_key_rotation() -> None:
     """Key rotation is planned as dangerous and warns callers."""
-    current = TagProfile()
+    current = make_ntag424_profile()
     requested = current.patch(
         security=SecurityProfile(default_keys=False),
     )
@@ -142,7 +161,7 @@ def test_plan_profile_changes_detects_key_rotation() -> None:
 
 def test_plan_profile_changes_rejects_tag_type_changes() -> None:
     """Tag type changes are rejected."""
-    current = TagProfile()
+    current = make_ntag424_profile()
     requested = current.patch(
         tag=TagInfo.model_construct(type="MIFARE"),
     )

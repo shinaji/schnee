@@ -15,7 +15,7 @@ from .models import (
 
 if TYPE_CHECKING:
     from .models import (
-        TagProfile,
+        Ntag424DnaProfile,
     )
 
 ProfileSection = NdefProfile | SdmProfile | AccessProfile | SecurityProfile
@@ -80,7 +80,10 @@ class ChangePlan(BaseModel):
         return any(operation.risk == "dangerous" for operation in self.operations)
 
 
-def plan_profile_changes(current: TagProfile, requested: TagProfile) -> ChangePlan:
+def plan_profile_changes(
+    current: Ntag424DnaProfile,
+    requested: Ntag424DnaProfile,
+) -> ChangePlan:
     """Create a write plan from current and requested tag profiles."""
     errors: list[str] = []
     warnings: list[str] = []
