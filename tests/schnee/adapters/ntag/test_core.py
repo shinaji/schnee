@@ -208,6 +208,24 @@ def test_build_change_key_apdu_for_master_key_uses_short_key_data() -> None:
     assert len(apdu) == SHORT_CHANGE_KEY_APDU_LENGTH
 
 
+@pytest.mark.parametrize("cmd_ctr", [-1, 0x10000])
+def test_build_change_key_apdu_rejects_out_of_range_cmd_ctr(cmd_ctr: int) -> None:
+    """ChangeKey command counter must fit the EV2 two-byte counter field."""
+    update = Ntag424.KeyUpdate(
+        key_no=Ntag424Key.APP_MASTER,
+        new_key=bytes(16),
+    )
+
+    with pytest.raises(ValueError, match="cmd_ctr"):
+        Ntag424.build_change_key_apdu(
+            update=update,
+            session_key_enc=bytes(16),
+            session_key_mac=bytes(16),
+            ti=bytes(4),
+            cmd_ctr=cmd_ctr,
+        )
+
+
 def test_build_change_key_apdu_requires_old_key_for_non_master_key() -> None:
     """Changing key 1..4 requires the current key material."""
     with pytest.raises(Ntag424.MissingOldKeyError):

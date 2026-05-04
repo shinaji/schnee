@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 _logger = get_logger(__name__)
 
 KEY_VERSION_MAX = 0xFF
+COMMAND_COUNTER_MAX = 0xFFFF
 
 
 class Ntag424Key(IntEnum):
@@ -443,6 +444,9 @@ class Ntag424:
         cls._validate_key_bytes("session_key_mac", session_key_mac)
         if len(ti) != cls.ti_size:
             msg = "ti must be 4 bytes"
+            raise ValueError(msg)
+        if not 0 <= cmd_ctr <= COMMAND_COUNTER_MAX:
+            msg = "cmd_ctr must be between 0 and 65535"
             raise ValueError(msg)
 
         plain_key_data = cls._build_change_key_data(update)
