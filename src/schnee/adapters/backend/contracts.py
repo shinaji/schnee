@@ -30,3 +30,6 @@ class ProfileBackend(ProfileReaderBackend, Protocol):
 
     def apply_plan(self, plan: ChangePlan) -> Ntag424DnaProfile:
         """Apply a profile change plan."""
+
+    def write_ndef_url(self, url: str) -> None:
+        """Write one URL NDEF record to the current tag."""

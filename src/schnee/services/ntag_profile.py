@@ -28,6 +28,41 @@ class ReadNtagProfileService(Service[NtagProfile]):
         return backend.read_profile()
 
 
+class WriteNdefUrlService(Service[None]):
+    """Write a URL NDEF record to NTAG 424 DNA or NTAG21x tags."""
+
+    class Request(Service.Request):
+        """Request for writing one URL NDEF record."""
+
+        backend_name: str = Field(
+            description="Backend name, for example `pcsc` or `pcsc:<reader name>`.",
+        )
+        url: str = Field(description="URL to write as a single NDEF URI record.")
+        ntag424_master_key: bytes | None = Field(
+            default=None,
+            min_length=AES_KEY_SIZE,
+            max_length=AES_KEY_SIZE,
+            description=(
+                "Current NTAG 424 DNA application master key. Provide this when "
+                "the NTAG 424 NDEF file requires authenticated writes."
+            ),
+        )
+
+    req: Request
+
+    def process(self) -> None:
+        """Write the requested NDEF URL."""
+        if self.req.ntag424_master_key is not None:
+            Ntag424(
+                backend_name=self.req.backend_name,
+                master_key=self.req.ntag424_master_key,
+            ).write_ndef_url_with_auth(self.req.url)
+            return
+
+        backend = Backend.get(self.req.backend_name)
+        backend.write_ndef_url(self.req.url)
+
+
 class Ntag424KeyUpdateRequest(Service.Request):
     """Request item for one NTAG 424 DNA application-key update."""
 
@@ -107,7 +142,11 @@ class UpdateNtag424KeysService(Service[None]):
         backend_name: str = Field(
             description="Backend name, for example `pcsc` or `pcsc:<reader name>`.",
         )
-        master_key: bytes = Field(description="Current application master key")
+        master_key: bytes = Field(
+            min_length=AES_KEY_SIZE,
+            max_length=AES_KEY_SIZE,
+            description="Current application master key",
+        )
         updates: list[Ntag424KeyUpdateRequest] = Field(
             min_length=1,
             max_length=5,
@@ -197,6 +236,68 @@ class ValidateNtag424KeysService(Service[list[Ntag424.KeyValidationResult]]):
                 )
                 for key in self.req.keys
             ],
+        )
+
+
+class SetNtag424SdmService(Service[None]):
+    """Enable or disable NTAG 424 DNA Secure Dynamic Messaging."""
+
+    class Request(Service.Request):
+        """Request for changing NTAG 424 DNA SDM state."""
+
+        backend_name: str = Field(
+            description="Backend name, for example `pcsc` or `pcsc:<reader name>`.",
+        )
+        master_key: bytes = Field(
+            min_length=AES_KEY_SIZE,
+            max_length=AES_KEY_SIZE,
+            description="Current application master key",
+        )
+        enabled: bool = Field(description="Whether SDM should be enabled")
+        url_template: str | None = Field(
+            default=None,
+            description=(
+                "URL template used to calculate SDM mirror offsets. Required when "
+                "enabling SDM. Include `UUUUUUUUUUUUUU` for the 7-byte UID hex, "
+                "`CCCCCC` for the 3-byte read counter hex, and "
+                "`MMMMMMMMMMMMMMMM` for the 8-byte CMAC hex; for example "
+                "`https://example.com/t?uid=UUUUUUUUUUUUUU&ctr=CCCCCC&mac="
+                "MMMMMMMMMMMMMMMM`."
+            ),
+        )
+        cmd_ctr_start: int = Field(
+            default=0,
+            ge=0,
+            le=0xFFFF,
+            description=(
+                "EV2 command counter for ChangeFileSettings. Use the default 0 "
+                "when this service authenticates and immediately changes SDM."
+            ),
+        )
+
+        class MissingUrlTemplateError(ValueError):
+            """Raised when enabling SDM without a URL template."""
+
+        @model_validator(mode="after")
+        def validate_request(self) -> Self:
+            """Validate service request constraints."""
+            if self.enabled and self.url_template is None:
+                msg = "url_template is required when enabling SDM"
+                raise self.MissingUrlTemplateError(msg)
+            return self
+
+    req: Request
+
+    def process(self) -> None:
+        """Apply the requested SDM state."""
+        ntag = Ntag424(
+            backend_name=self.req.backend_name,
+            master_key=self.req.master_key,
+        )
+        ntag.set_sdm_enabled(
+            enabled=self.req.enabled,
+            url_template=self.req.url_template,
+            cmd_ctr=self.req.cmd_ctr_start,
         )
 
 

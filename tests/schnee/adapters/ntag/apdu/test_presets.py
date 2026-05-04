@@ -19,6 +19,20 @@ def test_pcsc_contactless_apdu_presets_serialize_commands() -> None:
         0x03,
         0x04,
     ]
+    assert PcscContactlessApduPreset.update_binary(
+        page=0x04,
+        data=[0x03, 0x01, 0x00, 0xFE],
+    ).to_list() == [
+        0xFF,
+        0xD6,
+        0x00,
+        0x04,
+        0x04,
+        0x03,
+        0x01,
+        0x00,
+        0xFE,
+    ]
 
 
 def test_ntag424_apdu_presets_serialize_commands() -> None:

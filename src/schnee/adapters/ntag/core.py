@@ -16,9 +16,9 @@ from schnee.adapters.ntag.apdu import Ntag424ApduPreset
 from schnee.adapters.ntag.crypt import aes_decrypt, aes_encrypt, xor_bytes
 from schnee.adapters.ntag.utils import (
     Offset,
+    build_ndef_url_file_data,
     calculate_offsets,
     int_to_3bytes_le,
-    wrap_ndef_record,
 )
 from schnee.utils.logger import get_logger
 
@@ -536,18 +536,45 @@ class Ntag424:
 
     def configure_sdm_url(self, url: str, *, cmd_ctr: int = 1) -> None:
         """Authenticate, write an NDEF URL, and enable SDM explicitly."""
+        self.write_ndef_url_with_auth(url)
+        self.set_sdm_enabled(enabled=True, url_template=url, cmd_ctr=cmd_ctr)
+
+    def write_ndef_url_with_auth(self, url: str) -> None:
+        """Authenticate and write an NDEF URL to the NTAG 424 DNA NDEF file."""
+        self.connect()
+        self.authenticate()
+        self.write_ndef_url(url_string=url)
+
+    def set_sdm_enabled(
+        self,
+        *,
+        enabled: bool,
+        url_template: str | None = None,
+        cmd_ctr: int = 0,
+    ) -> None:
+        """Authenticate and enable or disable SDM for the NDEF file."""
         self.connect()
         k_ses_auth_enc, k_ses_auth_mac, ti, _iv = self.authenticate()
-        self.write_ndef_url(
-            url_string=url,
-        )
-        offset = calculate_offsets(url)
-        self._enable_sdm(
+        if enabled:
+            if url_template is None:
+                msg = "url_template is required when enabling SDM"
+                raise ValueError(msg)
+            offset = calculate_offsets(url_template)
+            self._change_sdm_settings(
+                session_key_enc=k_ses_auth_enc,
+                session_key_mac=k_ses_auth_mac,
+                ti=ti,
+                cmd_ctr=cmd_ctr,
+                payload=self._build_enable_sdm_payload(offset),
+            )
+            return
+
+        self._change_sdm_settings(
             session_key_enc=k_ses_auth_enc,
             session_key_mac=k_ses_auth_mac,
             ti=ti,
             cmd_ctr=cmd_ctr,
-            offset=offset,
+            payload=self._build_disable_sdm_payload(),
         )
 
     def _apdu_select(self) -> None:
@@ -562,17 +589,12 @@ class Ntag424:
         """Write NDEF URL to Tag"""
         _logger.debug("--- Write NDEF Data (URL) ---")
 
-        # 1. URLをNDEFデータに変換
-        ndef_record = wrap_ndef_record(url_string)
-        # ファイル全体のデータ: [Length(2bytes)] + [NDEF Record]
-        file_data = [len(ndef_record) >> 8 & 255, len(ndef_record) & 255, *ndef_record]
-
         _logger.debug("Writing URL: %s", url_string)
         response = self.connection.send_apdu(
             Ntag424ApduPreset.write_data_file(
                 file_no=Ntag424ApduPreset.ndef_file_no,
                 offset=[0x00, 0x00, 0x00],
-                data=file_data,
+                data=build_ndef_url_file_data(url_string),
             ),
         )
         _logger.debug("Response: %s", toHexString(response.data))
@@ -639,29 +661,47 @@ class Ntag424:
         # 3. 暗号化実行
         return cipher.encrypt(padded_data)
 
-    def _enable_sdm(
+    @staticmethod
+    def _build_enable_sdm_payload(offset: Offset) -> list[int]:
+        """Build ChangeFileSettings plaintext payload that enables SDM."""
+        file_option = 0x40
+        access_rights = [0x00, 0xE0]
+        sdm_options = 0xC1
+        sdm_access_rights = [0xF1, 0xE1]
+
+        return [
+            file_option,
+            *access_rights,
+            sdm_options,
+            *sdm_access_rights,
+            *int_to_3bytes_le(offset.uid_offset),
+            *int_to_3bytes_le(offset.counter_offset),
+            *int_to_3bytes_le(offset.mac_input_offset),
+            *int_to_3bytes_le(offset.mac_offset),
+        ]
+
+    @staticmethod
+    def _build_disable_sdm_payload() -> list[int]:
+        """Build ChangeFileSettings plaintext payload that disables SDM."""
+        file_option = 0x00
+        access_rights = [0x00, 0xE0]
+        return [file_option, *access_rights]
+
+    def _change_sdm_settings(
         self,
         session_key_enc: bytes,
         session_key_mac: bytes,
         ti: bytes,
         cmd_ctr: int,
-        offset: Offset,
+        payload: list[int],
     ) -> None:
-        """Disable SDM (ChangeFileSettings)"""
-        _logger.debug("--- Phase 3: ChangeFileSettings (Disable SDM) ---")
+        """Send a protected ChangeFileSettings command for the NDEF file."""
+        _logger.debug("--- ChangeFileSettings (SDM) ---")
+        if not 0 <= cmd_ctr <= COMMAND_COUNTER_MAX:
+            msg = "cmd_ctr must be between 0 and 65535"
+            raise ValueError(msg)
 
-        # 設定値
         file_no = 0x02
-        file_option = 0x40  # SDM OFF (Plain Communication)
-        access_rights = [0x00, 0xE0]  # Read=Free, Write=Key0 (現在の値を維持)
-        sdm_options = 0xC1
-        sdm_access_rights = [0xF1, 0x21]
-
-        # ペイロード組み立て
-        payload = [file_option, *access_rights, sdm_options, *sdm_access_rights]
-        payload += int_to_3bytes_le(offset.uid_offset)  # 33. UID
-        payload += int_to_3bytes_le(offset.mac_offset)  # 7. MacIn
-        payload += int_to_3bytes_le(offset.mac_offset)  # 59. MacOut
 
         iv = [
             0xA5,

@@ -20,7 +20,11 @@ from schnee.adapters.ntag.profile import (
     TagInfo,
     TagType,
 )
-from schnee.adapters.ntag.utils import int_to_3bytes_le
+from schnee.adapters.ntag.utils import (
+    build_ndef_url_file_data,
+    build_type2_ndef_url_tlv,
+    int_to_3bytes_le,
+)
 
 from .client import PcscApduClient
 from .reader import PcscConnection, PcscReader, PcscReaderProvider
@@ -58,6 +62,9 @@ class PcscBackend:
 
     class NdefParseError(PcscBackendError):
         """Raised when NDEF data cannot be represented as a profile."""
+
+    class NdefWriteError(PcscBackendError):
+        """Raised when NDEF data cannot be written to the current tag."""
 
     def __init__(self, reader: PcscReader) -> None:
         self.reader = reader
@@ -125,6 +132,16 @@ class PcscBackend:
         msg = "PC/SC profile writes are not implemented yet"
         raise self.UnsupportedPlanError(msg)
 
+    def write_ndef_url(self, url: str) -> None:
+        """Write one URL NDEF record to NTAG 424 DNA or NTAG21x tags."""
+        try:
+            self._select_ntag_application()
+        except CardConnectionException, PcscApduClient.PcscApduClientError:
+            self._write_type2_ndef_url(url)
+            return
+
+        self._write_ntag424_ndef_url(url)
+
     def _read_uid(self) -> str:
         """Read UID using the common PC/SC contactless reader command."""
         response = self.send_apdu(
@@ -176,6 +193,16 @@ class PcscBackend:
                 length=int_to_3bytes_le(length),
             ),
         ).data
+
+    def _write_ntag424_ndef_url(self, url: str) -> None:
+        """Write one URL NDEF record to the NTAG 424 DNA NDEF file."""
+        self.send_apdu(
+            Ntag424ApduPreset.write_data_file(
+                file_no=Ntag424ApduPreset.ndef_file_no,
+                offset=[0x00, 0x00, 0x00],
+                data=build_ndef_url_file_data(url),
+            ),
+        )
 
     def _get_file_settings(self, file_no: int) -> list[int]:
         """Send GetFileSettings for an NTAG 424 DNA file."""
@@ -262,6 +289,28 @@ class PcscBackend:
             if self.type2_terminator_tlv in memory:
                 break
         return memory[:capacity_bytes]
+
+    def _write_type2_ndef_url(self, url: str) -> None:
+        """Write one URL NDEF TLV to an NTAG21x/Type 2 Tag."""
+        capacity_bytes = self._read_type2_capacity_bytes()
+        tlv = build_type2_ndef_url_tlv(url)
+        if len(tlv) > capacity_bytes:
+            msg = (
+                f"NDEF URL TLV is {len(tlv)} bytes, "
+                f"but tag capacity is {capacity_bytes} bytes"
+            )
+            raise self.NdefWriteError(msg)
+
+        padded = [*tlv, *([0x00] * (self.type2_page_size - 1))]
+        page_count = (len(tlv) + self.type2_page_size - 1) // self.type2_page_size
+        for page_index in range(page_count):
+            start = page_index * self.type2_page_size
+            self.send_apdu(
+                PcscContactlessApduPreset.update_binary(
+                    page=self.type2_ndef_start_page + page_index,
+                    data=padded[start : start + self.type2_page_size],
+                ),
+            )
 
     @classmethod
     def create_pcsc_backend(cls, reader_name: str | None = None) -> PcscBackend:
