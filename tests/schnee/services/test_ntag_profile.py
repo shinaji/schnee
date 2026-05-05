@@ -12,6 +12,7 @@ from schnee.services.ntag_profile import (
     SetNtag424SdmService,
     UpdateNtag424KeysService,
     ValidateNtag424KeysService,
+    WriteNdefUrlBackendError,
     WriteNdefUrlService,
 )
 
@@ -106,6 +107,40 @@ def test_write_ndef_url_service_delegates_to_pcsc_backend(
     )
 
     assert written_urls == ["https://example.com"]
+
+
+def test_write_ndef_url_service_translates_backend_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Operational backend failures are exposed through service-level errors."""
+    backend = object.__new__(PcscBackend)
+
+    def write_ndef_url(_url: str) -> None:
+        msg = "tag rejected NDEF write"
+        raise PcscBackend.NdefWriteError(msg)
+
+    backend.write_ndef_url = write_ndef_url
+
+    monkeypatch.setattr(
+        "schnee.services.ntag_profile.Backend.get",
+        lambda _name: backend,
+    )
+
+    with pytest.raises(
+        WriteNdefUrlBackendError,
+        match=WriteNdefUrlBackendError.msg,
+    ) as exc_info:
+        WriteNdefUrlService.call(
+            WriteNdefUrlService.Request(
+                backend_name="pcsc:Reader A",
+                url="https://example.com",
+            ),
+        )
+
+    assert isinstance(
+        exc_info.value.__cause__,
+        PcscBackend.NdefWriteError,
+    ), "service error should preserve the backend failure as its cause"
 
 
 def test_write_ndef_url_service_can_authenticate_ntag424(

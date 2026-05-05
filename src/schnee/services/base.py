@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import TypeVar
+from typing import ClassVar, TypeVar
 
 from pydantic import BaseModel, ConfigDict
 
@@ -29,3 +29,12 @@ class _ServiceCore[T](ABC):
 
 class Service[T](_ServiceCore[T]):
     """Service base class"""
+
+
+class ServiceError(Exception):
+    """Base exception for service-layer errors."""
+
+    msg: ClassVar[str] = "Service error"
+
+    def __init__(self) -> None:
+        super().__init__(self.msg)
