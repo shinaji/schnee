@@ -79,13 +79,21 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          if [ "$(git rev-parse origin/main)" != "${GITHUB_SHA}" ]; then
+            echo "origin/main advanced after this workflow started; refusing to prepare a release from stale main." >&2
+            exit 1
+          fi
           git add pyproject.toml
           if git diff --cached --quiet; then
             echo "pyproject.toml already contains version ${{ steps.version.outputs.version }}"
             exit 0
           fi
           git commit -m "chore(release): prepare v${{ steps.version.outputs.version }} [skip ci]"
-          git push origin HEAD:main
+          if ! git push --force-with-lease=refs/heads/main:${GITHUB_SHA} origin HEAD:main; then
+            echo "release push was rejected because main moved; rerun the workflow from the latest main state." >&2
+            exit 1
+          fi
 
       - name: Create release tag
         if: ${{ steps.signal.outputs.release_kind != 'none' }}
