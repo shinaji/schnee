@@ -57,14 +57,22 @@ def parse_release_tag(tag: str) -> ZeroVer:
 
 def find_latest_release_tag(tags: list[str]) -> str | None:
     """Return the highest ZeroVer release tag from a list of tags."""
-    release_tags = [tag for tag in tags if tag.startswith(TAG_PREFIX)]
+    release_tags: list[tuple[ZeroVer, str]] = []
+    for tag in tags:
+        if not tag.startswith(TAG_PREFIX):
+            continue
+
+        try:
+            version = parse_release_tag(tag)
+        except ValueError:
+            continue
+
+        release_tags.append((version, tag))
+
     if not release_tags:
         return None
 
-    _, latest_tag = max(
-        ((parse_release_tag(tag), tag) for tag in release_tags),
-        key=lambda item: item[0],
-    )
+    _, latest_tag = max(release_tags, key=lambda item: item[0])
     return latest_tag
 
 
