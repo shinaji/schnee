@@ -8,9 +8,11 @@ from schnee.controllers.cli.errors import exit_for_service_error
 from schnee.controllers.cli.output import echo_json, echo_text
 from schnee.services.backend import ListBackendNamesService
 from schnee.services.base import ServiceError
-from schnee.services.ntag_profile import ReadNtagProfileService, WriteNdefUrlService
-
-AES_KEY_SIZE = 16
+from schnee.services.ntag_profile import (
+    AES_KEY_SIZE,
+    ReadNtagProfileService,
+    WriteNdefUrlService,
+)
 
 
 def _parse_optional_hex(value: str | None, *, option_name: str) -> bytes | None:
