@@ -1,4 +1,4 @@
-## schnee
+# schnee
 
 `schnee` is a Python package and CLI for working with NFC/RFID tags through a PC/SC
 reader, with a current focus on NTAG profile inspection and NDEF URL writes.
