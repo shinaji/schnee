@@ -20,6 +20,10 @@ dependencies = [
     "typer>=0.20.0,<1",
 ]
 
+[project.urls]
+"Repository" = "https://github.com/shinaji/schnee"
+"Issues" = "https://github.com/shinaji/schnee/issues"
+
 [project.scripts]
 schnee = "schnee.controllers.cli.main:main"
 
