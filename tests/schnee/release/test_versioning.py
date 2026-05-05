@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -52,6 +52,19 @@ def test_determine_next_version_increments_minor_release() -> None:
     version = determine_next_version(latest_release_tag="v0.4.2", release_kind="minor")
 
     assert version == "0.5.0", "minor releases should increment Y and reset Z"
+
+
+def test_determine_next_version_rejects_unknown_release_kind() -> None:
+    """Unknown release kinds should fail instead of defaulting to a patch release."""
+    with pytest.raises(ValueError, match="release_kind") as exc_info:
+        determine_next_version(
+            latest_release_tag="v0.4.2",
+            release_kind=cast("Any", "none"),
+        )
+
+    assert exc_info.value.args, (
+        "invalid release kinds should raise a descriptive error instead of bumping Z"
+    )
 
 
 def test_find_latest_release_tag_selects_highest_zerover_tag() -> None:

@@ -12,6 +12,8 @@ if TYPE_CHECKING:
 INITIAL_RELEASE_VERSION = "0.1.0"
 TAG_PREFIX = "v"
 ZEROVER_PART_COUNT = 3
+RELEASE_KIND_MINOR = "minor"
+RELEASE_KIND_PATCH = "patch"
 ReleaseKind = Literal["patch", "minor"]
 
 _PYPROJECT_VERSION_PATTERN = re.compile(r'^version = "([^"]+)"$')
@@ -71,11 +73,15 @@ def determine_next_version(
     release_kind: ReleaseKind,
 ) -> str:
     """Determine the next release version from the latest release tag."""
+    if release_kind not in {RELEASE_KIND_PATCH, RELEASE_KIND_MINOR}:
+        msg = f"expected release_kind to be 'patch' or 'minor', got {release_kind!r}"
+        raise ValueError(msg)
+
     if latest_release_tag is None:
         return INITIAL_RELEASE_VERSION
 
     latest_version = parse_release_tag(latest_release_tag)
-    if release_kind == "minor":
+    if release_kind == RELEASE_KIND_MINOR:
         return str(ZeroVer(minor=latest_version.minor + 1, patch=0))
 
     return str(ZeroVer(minor=latest_version.minor, patch=latest_version.patch + 1))
