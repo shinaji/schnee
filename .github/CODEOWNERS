@@ -1,5 +1,6 @@
 # Release-sensitive repository areas.
 pyproject.toml @shinaji
 README.md @shinaji
+.github/CODEOWNERS @shinaji
 .github/workflows/* @shinaji
 src/schnee/** @shinaji
