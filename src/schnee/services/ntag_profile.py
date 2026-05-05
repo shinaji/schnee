@@ -259,12 +259,19 @@ class ReadNtagProfileService(Service[NtagProfile]):
     class Request(Service.Request):
         """Request for reading an NTAG profile."""
 
+        backend_name: str = Field(
+            default="pcsc",
+            description="Backend name, for example `pcsc` or `pcsc:<reader name>`.",
+        )
+
         model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    req: Request
 
     def process(self) -> NtagProfile:
         """Read the current NTAG profile."""
         try:
-            backend = Backend.get(name="pcsc")
+            backend = Backend.get(self.req.backend_name)
             return backend.read_profile()
         except Backend.BackendNotFoundError as exc:
             raise ReadNtagProfileBackendNotFoundError from exc
@@ -285,6 +292,7 @@ class WriteNdefUrlService(Service[None]):
         """Request for writing one URL NDEF record."""
 
         backend_name: str = Field(
+            default="pcsc",
             description="Backend name, for example `pcsc` or `pcsc:<reader name>`.",
         )
         url: str = Field(description="URL to write as a single NDEF URI record.")
@@ -405,6 +413,7 @@ class UpdateNtag424KeysService(Service[None]):
         """Request for updating one or more NTAG 424 DNA keys."""
 
         backend_name: str = Field(
+            default="pcsc",
             description="Backend name, for example `pcsc` or `pcsc:<reader name>`.",
         )
         master_key: bytes = Field(
@@ -482,6 +491,7 @@ class ValidateNtag424KeysService(Service[list[Ntag424.KeyValidationResult]]):
         """Request for validating one or more NTAG 424 DNA keys."""
 
         backend_name: str = Field(
+            default="pcsc",
             description="Backend name, for example `pcsc` or `pcsc:<reader name>`.",
         )
         keys: list[Ntag424KeyValidationRequest] = Field(
@@ -541,6 +551,7 @@ class SetNtag424SdmService(Service[None]):
         """Request for changing NTAG 424 DNA SDM state."""
 
         backend_name: str = Field(
+            default="pcsc",
             description="Backend name, for example `pcsc` or `pcsc:<reader name>`.",
         )
         master_key: bytes = Field(

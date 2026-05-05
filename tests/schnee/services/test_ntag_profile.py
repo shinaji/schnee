@@ -6,9 +6,12 @@ from pydantic import ValidationError
 from schnee.adapters.backend import PcscBackend
 from schnee.adapters.ntag.apdu import CommandAPDU, ResponseAPDU
 from schnee.adapters.ntag.core import Ntag424Key, Session
+from schnee.adapters.ntag.profile.models import Ntag21xProfile, TagInfo
 from schnee.services.ntag_profile import (
     Ntag424KeyUpdateRequest,
     Ntag424KeyValidationRequest,
+    ReadNtagProfileBackendError,
+    ReadNtagProfileService,
     SetNtag424SdmService,
     UpdateNtag424KeysService,
     ValidateNtag424KeysService,
@@ -19,6 +22,7 @@ from schnee.services.ntag_profile import (
 GET_KEY_VERSION_INS = 0x64
 EXPECTED_KEY_VERSION = 0x11
 MISMATCHED_KEY_VERSION = 0x02
+NTAG215_NDEF_CAPACITY_BYTES = 496
 
 
 class FakeApduClient:
@@ -42,6 +46,99 @@ class FakeApduClient:
         if command[1] == GET_KEY_VERSION_INS:
             return ResponseAPDU(data=[self.key_versions[command[5]]], sw1=0x90, sw2=0)
         return ResponseAPDU(data=[], sw1=0x90, sw2=0)
+
+
+def test_read_ntag_profile_request_defaults_to_pcsc() -> None:
+    """Profile reads keep using the default PC/SC backend."""
+    req = ReadNtagProfileService.Request()
+
+    assert req.backend_name == "pcsc"
+
+
+def test_ntag_profile_service_requests_default_to_pcsc() -> None:
+    """All NTAG profile services use PC/SC when no backend is specified."""
+    update = Ntag424KeyUpdateRequest(
+        key_no=Ntag424Key.APP_MASTER,
+        new_key=bytes(16),
+    )
+    validation = Ntag424KeyValidationRequest(
+        key_no=Ntag424Key.APP_MASTER,
+        key=bytes(16),
+    )
+
+    assert WriteNdefUrlService.Request(url="https://example.com").backend_name == "pcsc"
+    assert (
+        UpdateNtag424KeysService.Request(
+            master_key=bytes(16),
+            updates=[update],
+        ).backend_name
+        == "pcsc"
+    )
+    assert ValidateNtag424KeysService.Request(keys=[validation]).backend_name == "pcsc"
+    assert (
+        SetNtag424SdmService.Request(
+            master_key=bytes(16),
+            enabled=False,
+        ).backend_name
+        == "pcsc"
+    )
+
+
+def test_read_ntag_profile_service_delegates_to_requested_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Profile reads select the backend through the service request."""
+    profile = Ntag21xProfile(
+        tag=TagInfo(type="NTAG215", uid="04112233445566"),
+        capacity_bytes=NTAG215_NDEF_CAPACITY_BYTES,
+    )
+    backend_names: list[str] = []
+
+    class FakeBackend:
+        def read_profile(self) -> Ntag21xProfile:
+            return profile
+
+    def get_backend(name: str) -> FakeBackend:
+        backend_names.append(name)
+        return FakeBackend()
+
+    monkeypatch.setattr("schnee.services.ntag_profile.Backend.get", get_backend)
+
+    result = ReadNtagProfileService.call(
+        ReadNtagProfileService.Request(backend_name="pcsc:Reader A"),
+    )
+
+    assert backend_names == ["pcsc:Reader A"]
+    assert result is profile
+
+
+def test_read_ntag_profile_service_translates_backend_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Operational backend read failures are exposed through service-level errors."""
+
+    class FakeBackend:
+        def read_profile(self) -> Ntag21xProfile:
+            msg = "tag profile read failed"
+            raise PcscBackend.UnsupportedProfileReadError(msg)
+
+    monkeypatch.setattr(
+        "schnee.services.ntag_profile.Backend.get",
+        lambda _name: FakeBackend(),
+    )
+
+    with pytest.raises(
+        ReadNtagProfileBackendError,
+        match=ReadNtagProfileBackendError.msg,
+    ) as exc_info:
+        ReadNtagProfileService.call(
+            ReadNtagProfileService.Request(backend_name="pcsc:Reader A"),
+        )
+
+    assert isinstance(
+        exc_info.value.__cause__,
+        PcscBackend.UnsupportedProfileReadError,
+    ), "service error should preserve the backend failure as its cause"
 
 
 def test_ntag424_key_update_request_requires_old_key_for_non_master() -> None:
