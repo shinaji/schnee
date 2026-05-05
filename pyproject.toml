@@ -1,6 +1,6 @@
 [project]
 name = "schnee"
-version = "0.1.0"
+dynamic = ["version"]
 description = "NFC/RFID tag authentication and encryption library"
 requires-python = ">=3.14, <3.15"
 authors = [
@@ -23,7 +23,7 @@ dependencies = [
 schnee = "schnee.controllers.cli.main:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatch-vcs", "hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
@@ -116,3 +116,11 @@ addopts = [
 ]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.hatch.version]
+source = "vcs"
+tag-pattern = "^v(?P<version>0\\.\\d+\\.\\d+)$"
+fallback-version = "0.0.0"
+
+[tool.hatch.version.raw-options]
+version_scheme = "no-guess-dev"
