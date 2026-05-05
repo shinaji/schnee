@@ -31,6 +31,7 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       - name: Validate release tag format
+        id: version
         env:
           VERSION: ${{ github.event.release.tag_name }}
         run: |
@@ -40,12 +41,29 @@ jobs:
           import sys
 
           version = os.environ["VERSION"]
-          if re.fullmatch(r"v\d{4}\.\d{1,2}\.\d{1,2}(?:\.\d+)?", version) is None:
+          match = re.fullmatch(r"v(\d{4})\.(\d{1,2})\.(\d{1,2})(?:\.(\d+))?", version)
+          if match is None:
               print(
                   f"Release tag must use the form vYYYY.M.D or vYYYY.M.D.N, got {version}.",
                   file=sys.stderr,
               )
               raise SystemExit(1)
+
+          year, month, day, serial = match.groups()
+          normalized = ".".join(
+              part
+              for part in (
+                  str(int(year)),
+                  str(int(month)),
+                  str(int(day)),
+                  str(int(serial)) if serial is not None else None,
+              )
+              if part is not None
+          )
+
+          output_path = os.environ["GITHUB_OUTPUT"]
+          with open(output_path, "a", encoding="utf-8") as fh:
+              fh.write(f"normalized={normalized}\n")
           PY
 
       - name: Build distribution packages
@@ -53,14 +71,13 @@ jobs:
 
       - name: Ensure built artifact versions match the release tag
         env:
-          VERSION: ${{ github.event.release.tag_name }}
+          VERSION: ${{ steps.version.outputs.normalized }}
         run: |
-          version="${VERSION#v}"
           for artifact in dist/*; do
             case "$(basename "${artifact}")" in
-              schnee-"${version}".tar.gz|schnee-"${version}"-*.whl) ;;
+              schnee-"${VERSION}".tar.gz|schnee-"${VERSION}"-*.whl) ;;
               *)
-                echo "Built artifact does not match release version ${version}: ${artifact}" >&2
+                echo "Built artifact does not match release version ${VERSION}: ${artifact}" >&2
                 exit 1
                 ;;
             esac
