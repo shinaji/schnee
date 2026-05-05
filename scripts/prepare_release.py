@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -15,8 +16,13 @@ from schnee.release.versioning import (
 
 def _list_release_tags() -> list[str]:
     """Return release tags visible from the current repository."""
-    completed = subprocess.run(
-        ["/usr/bin/git", "tag", "--list", "v0.*"],
+    git = shutil.which("git")
+    if git is None:
+        msg = "git executable is required to prepare a release"
+        raise RuntimeError(msg)
+
+    completed = subprocess.run(  # noqa: S603
+        [git, "tag", "--list", "v0.*"],
         check=True,
         capture_output=True,
         text=True,
