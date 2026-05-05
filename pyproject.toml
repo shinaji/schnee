@@ -2,6 +2,7 @@
 name = "schnee"
 dynamic = ["version"]
 description = "NFC/RFID tag authentication and encryption library"
+readme = "README.md"
 requires-python = ">=3.14, <3.15"
 authors = [
     { name = "shinaji" },
