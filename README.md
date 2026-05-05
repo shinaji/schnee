@@ -13,14 +13,26 @@ pip install schnee
 
 ## Requirements
 
-`schnee` talks to tags through PC/SC, so practical use requires:
+`schnee` talks to tags through PC/SC via `pyscard`, so practical use requires:
 
 - a compatible NFC or smart card reader
-- a working PC/SC stack on the host system
+- a working system PC/SC library/service
 - access to the target tag
 
-If the PC/SC stack or reader is not available, CLI commands that access hardware
-will fail during reader discovery or card communication.
+Platform-specific PC/SC prerequisites:
+
+- **Linux**: install a PC/SC implementation such as `pcsc-lite` and ensure the
+  `pcscd` daemon/service is installed and running. Depending on your
+  distribution, you may also need your reader's driver package.
+- **Windows**: `pyscard` uses the built-in WinSCard PC/SC subsystem that ships
+  with Windows; make sure the smart card service and your reader driver are
+  available.
+- **macOS**: `pyscard` uses the system `PCSC.framework`, which is included with
+  macOS; make sure the reader is connected and recognized by the system.
+
+If the PC/SC stack, service, or reader is not available, `pyscard` may fail to
+import, no readers may be discovered, or CLI commands that access hardware will
+fail during reader discovery or card communication.
 
 ## CLI Usage
 
