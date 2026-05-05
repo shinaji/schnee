@@ -1,0 +1,99 @@
+name: Prepare Release
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: prepare-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-release:
+    name: Prepare ZeroVer Release
+    if: ${{ github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, 'chore(release):') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@42375524a0d71fce93d5f68f63e4bcdf9689ff89
+        with:
+          python-version: "3.14"
+
+      - name: Resolve release signal
+        id: signal
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
+        with:
+          script: |
+            const prs = await github.paginate(
+              github.rest.repos.listPullRequestsAssociatedWithCommit,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+              },
+            );
+
+            const mergedPr = prs.find((pr) => pr.merged_at && pr.base.ref === "main");
+            if (!mergedPr) {
+              core.info(`No merged pull request found for commit ${context.sha}; skipping release.`);
+              core.setOutput("release_kind", "none");
+              return;
+            }
+
+            const labels = mergedPr.labels.map((label) => label.name);
+            const hasPatch = labels.includes("release:patch");
+            const hasMinor = labels.includes("release:minor");
+
+            if (hasPatch && hasMinor) {
+              core.setFailed(
+                `Pull request #${mergedPr.number} cannot carry both release:patch and release:minor labels.`,
+              );
+              return;
+            }
+
+            const releaseKind = hasMinor ? "minor" : hasPatch ? "patch" : "none";
+            core.info(`Resolved release signal ${releaseKind} from pull request #${mergedPr.number}.`);
+            core.setOutput("release_kind", releaseKind);
+            core.setOutput("pr_number", String(mergedPr.number));
+
+      - name: Prepare version
+        id: version
+        if: ${{ steps.signal.outputs.release_kind != 'none' }}
+        env:
+          PYTHONPATH: src
+        run: |
+          version="$(python scripts/prepare_release.py --release-kind "${{ steps.signal.outputs.release_kind }}")"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Commit release version
+        if: ${{ steps.signal.outputs.release_kind != 'none' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml
+          if git diff --cached --quiet; then
+            echo "pyproject.toml already contains version ${{ steps.version.outputs.version }}"
+            exit 0
+          fi
+          git commit -m "chore(release): prepare v${{ steps.version.outputs.version }} [skip ci]"
+          git push origin HEAD:main
+
+      - name: Create release tag
+        if: ${{ steps.signal.outputs.release_kind != 'none' }}
+        run: |
+          git fetch --tags
+          if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "Tag v${{ steps.version.outputs.version }} already exists."
+            exit 0
+          fi
+          git tag -a "v${{ steps.version.outputs.version }}" -m "Release v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
