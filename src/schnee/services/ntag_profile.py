@@ -1,17 +1,256 @@
 """Services for NTAG profile operations."""
 
+from __future__ import annotations
+
 import sys
-from typing import Self
+from typing import ClassVar, Self
 
 from pydantic import ConfigDict, Field, model_validator
+from smartcard.Exceptions import CardConnectionException
 
 from schnee.adapters.backend import PcscBackend
 from schnee.adapters.backend.core import Backend
-from schnee.adapters.ntag.core import Ntag424, Ntag424Key
+from schnee.adapters.backend.pcsc import PcscApduClient, PcscReaderProvider
+from schnee.adapters.ntag.core import Ntag424, Ntag424Key, Session
 from schnee.adapters.ntag.profile import NtagProfile
-from schnee.services.base import Service
+from schnee.adapters.ntag.utils import PlaceholderNotFoundError
+from schnee.services.base import Service, ServiceError
 
 AES_KEY_SIZE = 16
+
+
+class ReadNtagProfileServiceError(ServiceError):
+    """Base exception for read NTAG profile service errors."""
+
+    msg: ClassVar[str] = "Read NTAG profile service error"
+
+
+class ReadNtagProfileBackendNotFoundError(ReadNtagProfileServiceError):
+    """Raised when the configured profile backend is not available."""
+
+    msg: ClassVar[str] = "Read NTAG profile backend is not available"
+
+
+class ReadNtagProfileReaderError(ReadNtagProfileServiceError):
+    """Raised when PC/SC reader discovery fails."""
+
+    msg: ClassVar[str] = "Read NTAG profile reader discovery failed"
+
+
+class ReadNtagProfileConnectionError(ReadNtagProfileServiceError):
+    """Raised when PC/SC card communication fails."""
+
+    msg: ClassVar[str] = "Read NTAG profile card communication failed"
+
+
+class ReadNtagProfileApduError(ReadNtagProfileServiceError):
+    """Raised when PC/SC APDU exchange fails."""
+
+    msg: ClassVar[str] = "Read NTAG profile APDU exchange failed"
+
+
+class ReadNtagProfileBackendError(ReadNtagProfileServiceError):
+    """Raised when the PC/SC backend cannot read the profile."""
+
+    msg: ClassVar[str] = "Read NTAG profile backend operation failed"
+
+
+class WriteNdefUrlServiceError(ServiceError):
+    """Base exception for write NDEF URL service errors."""
+
+    msg: ClassVar[str] = "Write NDEF URL service error"
+
+
+class WriteNdefUrlBackendNotFoundError(WriteNdefUrlServiceError):
+    """Raised when the requested profile backend is not available."""
+
+    msg: ClassVar[str] = "Write NDEF URL backend is not available"
+
+
+class WriteNdefUrlReaderError(WriteNdefUrlServiceError):
+    """Raised when PC/SC reader discovery fails."""
+
+    msg: ClassVar[str] = "Write NDEF URL reader discovery failed"
+
+
+class WriteNdefUrlConnectionError(WriteNdefUrlServiceError):
+    """Raised when PC/SC card communication fails."""
+
+    msg: ClassVar[str] = "Write NDEF URL card communication failed"
+
+
+class WriteNdefUrlApduError(WriteNdefUrlServiceError):
+    """Raised when PC/SC APDU exchange fails."""
+
+    msg: ClassVar[str] = "Write NDEF URL APDU exchange failed"
+
+
+class WriteNdefUrlBackendError(WriteNdefUrlServiceError):
+    """Raised when the backend cannot write the NDEF URL."""
+
+    msg: ClassVar[str] = "Write NDEF URL backend operation failed"
+
+
+class WriteNdefUrlNtag424Error(WriteNdefUrlServiceError):
+    """Raised when the NTAG 424 adapter cannot write the NDEF URL."""
+
+    msg: ClassVar[str] = "Write NDEF URL NTAG 424 operation failed"
+
+
+class WriteNdefUrlSessionError(WriteNdefUrlServiceError):
+    """Raised when NTAG 424 authentication fails."""
+
+    msg: ClassVar[str] = "Write NDEF URL NTAG 424 session failed"
+
+
+class UpdateNtag424KeysServiceError(ServiceError):
+    """Base exception for update NTAG 424 keys service errors."""
+
+    msg: ClassVar[str] = "Update NTAG 424 keys service error"
+
+
+class UpdateNtag424KeysBackendNotFoundError(UpdateNtag424KeysServiceError):
+    """Raised when the requested profile backend is not available."""
+
+    msg: ClassVar[str] = "Update NTAG 424 keys backend is not available"
+
+
+class UpdateNtag424KeysReaderError(UpdateNtag424KeysServiceError):
+    """Raised when PC/SC reader discovery fails."""
+
+    msg: ClassVar[str] = "Update NTAG 424 keys reader discovery failed"
+
+
+class UpdateNtag424KeysConnectionError(UpdateNtag424KeysServiceError):
+    """Raised when PC/SC card communication fails."""
+
+    msg: ClassVar[str] = "Update NTAG 424 keys card communication failed"
+
+
+class UpdateNtag424KeysApduError(UpdateNtag424KeysServiceError):
+    """Raised when PC/SC APDU exchange fails."""
+
+    msg: ClassVar[str] = "Update NTAG 424 keys APDU exchange failed"
+
+
+class UpdateNtag424KeysBackendError(UpdateNtag424KeysServiceError):
+    """Raised when the backend cannot update NTAG 424 keys."""
+
+    msg: ClassVar[str] = "Update NTAG 424 keys backend operation failed"
+
+
+class UpdateNtag424KeysNtag424Error(UpdateNtag424KeysServiceError):
+    """Raised when the NTAG 424 adapter rejects a key update."""
+
+    msg: ClassVar[str] = "Update NTAG 424 keys adapter operation failed"
+
+
+class UpdateNtag424KeysSessionError(UpdateNtag424KeysServiceError):
+    """Raised when NTAG 424 authentication fails during key updates."""
+
+    msg: ClassVar[str] = "Update NTAG 424 keys session failed"
+
+
+class ValidateNtag424KeysServiceError(ServiceError):
+    """Base exception for validate NTAG 424 keys service errors."""
+
+    msg: ClassVar[str] = "Validate NTAG 424 keys service error"
+
+
+class ValidateNtag424KeysBackendNotFoundError(ValidateNtag424KeysServiceError):
+    """Raised when the requested profile backend is not available."""
+
+    msg: ClassVar[str] = "Validate NTAG 424 keys backend is not available"
+
+
+class ValidateNtag424KeysReaderError(ValidateNtag424KeysServiceError):
+    """Raised when PC/SC reader discovery fails."""
+
+    msg: ClassVar[str] = "Validate NTAG 424 keys reader discovery failed"
+
+
+class ValidateNtag424KeysConnectionError(ValidateNtag424KeysServiceError):
+    """Raised when PC/SC card communication fails before validation starts."""
+
+    msg: ClassVar[str] = "Validate NTAG 424 keys card communication failed"
+
+
+class ValidateNtag424KeysApduError(ValidateNtag424KeysServiceError):
+    """Raised when PC/SC APDU exchange fails before validation starts."""
+
+    msg: ClassVar[str] = "Validate NTAG 424 keys APDU exchange failed"
+
+
+class ValidateNtag424KeysBackendError(ValidateNtag424KeysServiceError):
+    """Raised when the backend cannot validate NTAG 424 keys."""
+
+    msg: ClassVar[str] = "Validate NTAG 424 keys backend operation failed"
+
+
+class ValidateNtag424KeysNtag424Error(ValidateNtag424KeysServiceError):
+    """Raised when the NTAG 424 adapter rejects key validation."""
+
+    msg: ClassVar[str] = "Validate NTAG 424 keys adapter operation failed"
+
+
+class ValidateNtag424KeysSessionError(ValidateNtag424KeysServiceError):
+    """Raised when NTAG 424 session setup fails before validation starts."""
+
+    msg: ClassVar[str] = "Validate NTAG 424 keys session failed"
+
+
+class SetNtag424SdmServiceError(ServiceError):
+    """Base exception for set NTAG 424 SDM service errors."""
+
+    msg: ClassVar[str] = "Set NTAG 424 SDM service error"
+
+
+class SetNtag424SdmBackendNotFoundError(SetNtag424SdmServiceError):
+    """Raised when the requested profile backend is not available."""
+
+    msg: ClassVar[str] = "Set NTAG 424 SDM backend is not available"
+
+
+class SetNtag424SdmReaderError(SetNtag424SdmServiceError):
+    """Raised when PC/SC reader discovery fails."""
+
+    msg: ClassVar[str] = "Set NTAG 424 SDM reader discovery failed"
+
+
+class SetNtag424SdmConnectionError(SetNtag424SdmServiceError):
+    """Raised when PC/SC card communication fails."""
+
+    msg: ClassVar[str] = "Set NTAG 424 SDM card communication failed"
+
+
+class SetNtag424SdmApduError(SetNtag424SdmServiceError):
+    """Raised when PC/SC APDU exchange fails."""
+
+    msg: ClassVar[str] = "Set NTAG 424 SDM APDU exchange failed"
+
+
+class SetNtag424SdmBackendError(SetNtag424SdmServiceError):
+    """Raised when the backend cannot change SDM state."""
+
+    msg: ClassVar[str] = "Set NTAG 424 SDM backend operation failed"
+
+
+class SetNtag424SdmNtag424Error(SetNtag424SdmServiceError):
+    """Raised when the NTAG 424 adapter cannot change SDM state."""
+
+    msg: ClassVar[str] = "Set NTAG 424 SDM adapter operation failed"
+
+
+class SetNtag424SdmSessionError(SetNtag424SdmServiceError):
+    """Raised when NTAG 424 authentication fails while changing SDM."""
+
+    msg: ClassVar[str] = "Set NTAG 424 SDM session failed"
+
+
+class SetNtag424SdmUrlTemplateError(SetNtag424SdmServiceError):
+    """Raised when SDM URL template placeholders cannot be resolved."""
+
+    msg: ClassVar[str] = "Set NTAG 424 SDM URL template is invalid"
 
 
 class ReadNtagProfileService(Service[NtagProfile]):
@@ -24,8 +263,19 @@ class ReadNtagProfileService(Service[NtagProfile]):
 
     def process(self) -> NtagProfile:
         """Read the current NTAG profile."""
-        backend = Backend.get(name="pcsc")
-        return backend.read_profile()
+        try:
+            backend = Backend.get(name="pcsc")
+            return backend.read_profile()
+        except Backend.BackendNotFoundError as exc:
+            raise ReadNtagProfileBackendNotFoundError from exc
+        except PcscReaderProvider.PcscReaderProviderError as exc:
+            raise ReadNtagProfileReaderError from exc
+        except CardConnectionException as exc:
+            raise ReadNtagProfileConnectionError from exc
+        except PcscApduClient.PcscApduClientError as exc:
+            raise ReadNtagProfileApduError from exc
+        except PcscBackend.PcscBackendError as exc:
+            raise ReadNtagProfileBackendError from exc
 
 
 class WriteNdefUrlService(Service[None]):
@@ -52,15 +302,30 @@ class WriteNdefUrlService(Service[None]):
 
     def process(self) -> None:
         """Write the requested NDEF URL."""
-        if self.req.ntag424_master_key is not None:
-            Ntag424(
-                backend_name=self.req.backend_name,
-                master_key=self.req.ntag424_master_key,
-            ).write_ndef_url_with_auth(self.req.url)
-            return
+        try:
+            if self.req.ntag424_master_key is not None:
+                Ntag424(
+                    backend_name=self.req.backend_name,
+                    master_key=self.req.ntag424_master_key,
+                ).write_ndef_url_with_auth(self.req.url)
+                return
 
-        backend = Backend.get(self.req.backend_name)
-        backend.write_ndef_url(self.req.url)
+            backend = Backend.get(self.req.backend_name)
+            backend.write_ndef_url(self.req.url)
+        except Backend.BackendNotFoundError as exc:
+            raise WriteNdefUrlBackendNotFoundError from exc
+        except PcscReaderProvider.PcscReaderProviderError as exc:
+            raise WriteNdefUrlReaderError from exc
+        except CardConnectionException as exc:
+            raise WriteNdefUrlConnectionError from exc
+        except PcscApduClient.PcscApduClientError as exc:
+            raise WriteNdefUrlApduError from exc
+        except PcscBackend.PcscBackendError as exc:
+            raise WriteNdefUrlBackendError from exc
+        except Ntag424.Ntag424Error as exc:
+            raise WriteNdefUrlNtag424Error from exc
+        except Session.SessionError as exc:
+            raise WriteNdefUrlSessionError from exc
 
 
 class Ntag424KeyUpdateRequest(Service.Request):
@@ -177,22 +442,37 @@ class UpdateNtag424KeysService(Service[None]):
 
     def process(self) -> None:
         """Update requested NTAG 424 DNA application keys."""
-        ntag = Ntag424(
-            backend_name=self.req.backend_name,
-            master_key=self.req.master_key,
-        )
-        ntag.update_keys(
-            [
-                Ntag424.KeyUpdate(
-                    key_no=update.key_no,
-                    new_key=update.new_key,
-                    key_version=update.key_version,
-                    old_key=update.old_key,
-                )
-                for update in self.req.updates
-            ],
-            cmd_ctr_start=self.req.cmd_ctr_start,
-        )
+        try:
+            ntag = Ntag424(
+                backend_name=self.req.backend_name,
+                master_key=self.req.master_key,
+            )
+            ntag.update_keys(
+                [
+                    Ntag424.KeyUpdate(
+                        key_no=update.key_no,
+                        new_key=update.new_key,
+                        key_version=update.key_version,
+                        old_key=update.old_key,
+                    )
+                    for update in self.req.updates
+                ],
+                cmd_ctr_start=self.req.cmd_ctr_start,
+            )
+        except Backend.BackendNotFoundError as exc:
+            raise UpdateNtag424KeysBackendNotFoundError from exc
+        except PcscReaderProvider.PcscReaderProviderError as exc:
+            raise UpdateNtag424KeysReaderError from exc
+        except CardConnectionException as exc:
+            raise UpdateNtag424KeysConnectionError from exc
+        except PcscApduClient.PcscApduClientError as exc:
+            raise UpdateNtag424KeysApduError from exc
+        except PcscBackend.PcscBackendError as exc:
+            raise UpdateNtag424KeysBackendError from exc
+        except Ntag424.Ntag424Error as exc:
+            raise UpdateNtag424KeysNtag424Error from exc
+        except Session.SessionError as exc:
+            raise UpdateNtag424KeysSessionError from exc
 
 
 class ValidateNtag424KeysService(Service[list[Ntag424.KeyValidationResult]]):
@@ -226,17 +506,32 @@ class ValidateNtag424KeysService(Service[list[Ntag424.KeyValidationResult]]):
 
     def process(self) -> list[Ntag424.KeyValidationResult]:
         """Validate requested NTAG 424 DNA application keys."""
-        return Ntag424.validate_keys(
-            backend_name=self.req.backend_name,
-            keys=[
-                Ntag424.KeyValidation(
-                    key_no=key.key_no,
-                    key=key.key,
-                    key_version=key.key_version,
-                )
-                for key in self.req.keys
-            ],
-        )
+        try:
+            return Ntag424.validate_keys(
+                backend_name=self.req.backend_name,
+                keys=[
+                    Ntag424.KeyValidation(
+                        key_no=key.key_no,
+                        key=key.key,
+                        key_version=key.key_version,
+                    )
+                    for key in self.req.keys
+                ],
+            )
+        except Backend.BackendNotFoundError as exc:
+            raise ValidateNtag424KeysBackendNotFoundError from exc
+        except PcscReaderProvider.PcscReaderProviderError as exc:
+            raise ValidateNtag424KeysReaderError from exc
+        except CardConnectionException as exc:
+            raise ValidateNtag424KeysConnectionError from exc
+        except PcscApduClient.PcscApduClientError as exc:
+            raise ValidateNtag424KeysApduError from exc
+        except PcscBackend.PcscBackendError as exc:
+            raise ValidateNtag424KeysBackendError from exc
+        except Ntag424.Ntag424Error as exc:
+            raise ValidateNtag424KeysNtag424Error from exc
+        except Session.SessionError as exc:
+            raise ValidateNtag424KeysSessionError from exc
 
 
 class SetNtag424SdmService(Service[None]):
@@ -290,22 +585,98 @@ class SetNtag424SdmService(Service[None]):
 
     def process(self) -> None:
         """Apply the requested SDM state."""
-        ntag = Ntag424(
-            backend_name=self.req.backend_name,
-            master_key=self.req.master_key,
-        )
-        ntag.set_sdm_enabled(
-            enabled=self.req.enabled,
-            url_template=self.req.url_template,
-            cmd_ctr=self.req.cmd_ctr_start,
-        )
+        try:
+            ntag = Ntag424(
+                backend_name=self.req.backend_name,
+                master_key=self.req.master_key,
+            )
+            ntag.set_sdm_enabled(
+                enabled=self.req.enabled,
+                url_template=self.req.url_template,
+                cmd_ctr=self.req.cmd_ctr_start,
+            )
+        except Backend.BackendNotFoundError as exc:
+            raise SetNtag424SdmBackendNotFoundError from exc
+        except PcscReaderProvider.PcscReaderProviderError as exc:
+            raise SetNtag424SdmReaderError from exc
+        except CardConnectionException as exc:
+            raise SetNtag424SdmConnectionError from exc
+        except PcscApduClient.PcscApduClientError as exc:
+            raise SetNtag424SdmApduError from exc
+        except PcscBackend.PcscBackendError as exc:
+            raise SetNtag424SdmBackendError from exc
+        except Ntag424.Ntag424Error as exc:
+            raise SetNtag424SdmNtag424Error from exc
+        except Session.SessionError as exc:
+            raise SetNtag424SdmSessionError from exc
+        except PlaceholderNotFoundError as exc:
+            raise SetNtag424SdmUrlTemplateError from exc
 
 
 def main() -> int:
     """Run the profile read service from the command line."""
     try:
-        ReadNtagProfileService.call(ReadNtagProfileService.Request())
-    except PcscBackend.UnsupportedProfileReadError as exc:
+        print(ReadNtagProfileService.call(ReadNtagProfileService.Request()))
+        print(
+            UpdateNtag424KeysService.call(
+                UpdateNtag424KeysService.Request(
+                    backend_name="pcsc",
+                    master_key=bytes(16),
+                    updates=[
+                        Ntag424KeyUpdateRequest(
+                            key_no=Ntag424Key.APP_KEY_1,
+                            new_key=bytes(16),
+                            key_version=0,
+                            old_key=bytes(16),
+                        ),
+                    ],
+                )
+            )
+        )
+        print(
+            ValidateNtag424KeysService.call(
+                ValidateNtag424KeysService.Request(
+                    backend_name="pcsc",
+                    keys=[
+                        Ntag424KeyValidationRequest(
+                            key_no=Ntag424Key.APP_MASTER, key=bytes(16), key_version=0
+                        ),
+                        Ntag424KeyValidationRequest(
+                            key_no=Ntag424Key.APP_KEY_1,
+                            key=bytes(16),
+                            key_version=0,
+                        ),
+                        Ntag424KeyValidationRequest(
+                            key_no=Ntag424Key.APP_KEY_2, key=bytes(16), key_version=0
+                        ),
+                        Ntag424KeyValidationRequest(
+                            key_no=Ntag424Key.APP_KEY_3, key=bytes(16), key_version=0
+                        ),
+                        Ntag424KeyValidationRequest(
+                            key_no=Ntag424Key.APP_KEY_4, key=bytes(16), key_version=0
+                        ),
+                    ],
+                )
+            )
+        )
+        WriteNdefUrlService.call(
+            WriteNdefUrlService.Request(
+                backend_name="pcsc",
+                url="https://example.com/t?uid=UUUUUUUUUUUUUU&ctr=CCCCCC&mac="
+                "MMMMMMMMMMMMMMMM",
+                ntag424_master_key=bytes(16),
+            )
+        )
+        SetNtag424SdmService.call(
+            SetNtag424SdmService.Request(
+                backend_name="pcsc",
+                master_key=bytes(16),
+                enabled=True,
+                url_template="https://example.com/t?uid=UUUUUUUUUUUUUU&ctr=CCCCCC&mac="
+                "MMMMMMMMMMMMMMMM",
+            )
+        )
+    except ServiceError as exc:
         print(exc, file=sys.stderr)
         return 1
     return 0
