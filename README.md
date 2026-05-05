@@ -78,6 +78,11 @@ schnee ntag write-url \
   --ntag424-master-key-hex 00112233445566778899aabbccddeeff
 ```
 
+**Warning:** passing a secret key on the command line can expose it through
+shell history, terminal logging, or process listings visible to other local
+users. Avoid using real production keys this way; prefer a safer secret input
+mechanism if one is available in your environment.
+
 ## Python API
 
 The stable Python entry points currently exposed by the package are the service
