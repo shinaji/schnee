@@ -25,7 +25,7 @@ def _parse_optional_hex(value: str | None, *, option_name: str) -> bytes | None:
         msg = "must be valid hexadecimal"
         raise typer.BadParameter(msg, param_hint=option_name) from exc
     if len(parsed) != AES_KEY_SIZE:
-        msg = "must decode to 16 bytes"
+        msg = "must be 32 hex characters that decode to 16 bytes"
         raise typer.BadParameter(
             msg,
             param_hint=option_name,
@@ -93,7 +93,9 @@ def register_commands(app: typer.Typer) -> None:
             str | None,
             typer.Option(
                 "--ntag424-master-key-hex",
-                help="Current NTAG 424 DNA application master key as hex.",
+                help=(
+                    "Current NTAG 424 DNA application master key as 32 hex characters."
+                ),
             ),
         ] = None,
     ) -> None:

@@ -266,6 +266,27 @@ def test_ntag_write_url_rejects_invalid_key_hex() -> None:
     )
 
 
+def test_ntag_write_url_rejects_wrong_length_key_hex() -> None:
+    """Valid hex with the wrong key length is rejected before service construction."""
+    result = CliRunner().invoke(
+        app,
+        [
+            "ntag",
+            "write-url",
+            "--url",
+            "https://example.com",
+            "--ntag424-master-key-hex",
+            "00" * 15,
+        ],
+        prog_name="schnee",
+    )
+
+    assert result.exit_code != 0, "wrong-length key hex should fail the CLI command"
+    assert "32 hex characters" in result.stderr, (
+        "wrong-length key hex should explain the required hex string length"
+    )
+
+
 def test_ntag_write_url_renders_service_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
