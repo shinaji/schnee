@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from typer.testing import CliRunner
 
+from schnee.controllers.cli.errors import SERVICE_ERROR_EXIT_CODE
 from schnee.controllers.cli.main import app
 from schnee.services.ntag_profile import ReadNtagProfileBackendError
 
@@ -127,7 +128,9 @@ def test_ntag_read_renders_service_errors(monkeypatch: pytest.MonkeyPatch) -> No
 
     result = CliRunner().invoke(app, ["ntag", "read"], prog_name="schnee")
 
-    assert result.exit_code == 1, "service errors should produce a non-zero exit code"
-    assert ReadNtagProfileBackendError.msg in result.output, (
-        "service errors should be rendered through the CLI error handler"
+    assert result.exit_code == SERVICE_ERROR_EXIT_CODE, (
+        "service errors should produce the configured CLI error exit code"
+    )
+    assert ReadNtagProfileBackendError.msg in result.stderr, (
+        "service errors should be rendered to stderr through the CLI error handler"
     )
