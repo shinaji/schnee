@@ -119,7 +119,7 @@ pythonpath = ["src"]
 
 [tool.hatch.version]
 source = "vcs"
-tag-pattern = "^v(?P<version>0\\.\\d+\\.\\d+)$"
+tag-pattern = "^v(?P<version>\\d{4}\\.\\d{1,2}\\.\\d{1,2}(?:\\.\\d+)?)$"
 fallback-version = "0.0.0"
 
 [tool.hatch.version.raw-options]
