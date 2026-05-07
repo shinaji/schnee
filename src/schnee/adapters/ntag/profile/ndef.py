@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from schnee.ndef import NdefUriPrefix
+
 from .models import NdefProfile, NdefRecord
 
 
@@ -143,18 +145,12 @@ class NdefProfileParser:
             msg = "URI NDEF payload is empty"
             raise cls.NdefParseError(msg)
 
-        prefixes = {
-            0x00: "",
-            0x01: "http://www.",
-            0x02: "https://www.",
-            0x03: "http://",
-            0x04: "https://",
-        }
-        prefix = prefixes.get(payload[0])
-        if prefix is None:
-            msg = f"Unsupported URI identifier code: {payload[0]:#x}"
-            raise cls.NdefParseError(msg)
-        return f"{prefix}{payload[1:].decode()}"
+        try:
+            prefix = NdefUriPrefix.from_code(payload[0])
+        except ValueError as exc:
+            msg = str(exc)
+            raise cls.NdefParseError(msg) from exc
+        return f"{prefix.expanded_text}{payload[1:].decode()}"
 
     @classmethod
     def _parse_text_payload(cls, payload: bytes) -> str:

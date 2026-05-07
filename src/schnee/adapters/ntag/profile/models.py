@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal, Self
 
-from pydantic import BaseModel, Field, HttpUrl, model_validator
+from pydantic import AnyUrl, BaseModel, Field, HttpUrl, model_validator
 
 if TYPE_CHECKING:
     from .planning import ChangePlan
@@ -22,7 +22,7 @@ class NdefRecord(BaseModel):
     def validate_record(self) -> Self:
         """Validate record-specific payload constraints."""
         if self.type == "url":
-            HttpUrl(self.value)
+            AnyUrl(self.value)
         return self
 
 
