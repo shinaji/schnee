@@ -99,9 +99,9 @@ default `--ndef-prefix no_prefix` and pass `--signed-text` exactly as it was
 mirrored.
 
 When the tag stored the URI record with an NDEF URI Identifier Code such as
-`https://`, pass that code through `--ndef-prefix`. The verifier removes the
-expanded prefix from `signed_text` before MAC calculation only when both of the
-following are true:
+`https` (which expands to `https://`), pass that token through
+`--ndef-prefix`. The verifier removes the expanded prefix from `signed_text`
+before MAC calculation only when both of the following are true:
 
 - the selected `--ndef-prefix` expands to a non-empty prefix such as
   `https://`
