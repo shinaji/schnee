@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import sys
 from typing import ClassVar, NamedTuple, Self
 
@@ -697,7 +698,7 @@ class VerifyNtag424SdmMacService(Service[VerifyNtag424SdmMacResult]):
             counter=self.req.counter,
         )
         return VerifyNtag424SdmMacResult(
-            valid=calculated_mac == self.req.mac,
+            valid=hmac.compare_digest(calculated_mac, self.req.mac),
             calculated_mac=calculated_mac,
             ndef_prefix=self.req.ndef_prefix,
             prefix_removed=normalized_text.prefix_removed,
