@@ -4,14 +4,12 @@ import typer
 
 
 def parse_hex(
-    value: str | None,
+    value: str,
     *,
     option_name: str,
     byte_length: int,
-) -> bytes | None:
+) -> bytes:
     """Convert CLI hex input to bytes with exact length validation."""
-    if value is None:
-        return None
     try:
         parsed = bytes.fromhex(value)
     except ValueError as exc:

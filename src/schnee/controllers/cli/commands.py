@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, cast
+from typing import Annotated
 
 import typer
 
@@ -96,10 +96,14 @@ def _register_ntag_commands(app: typer.Typer) -> None:
         ] = None,
     ) -> None:
         """Write a URL NDEF record."""
-        ntag424_master_key = parse_hex(
-            ntag424_master_key_hex,
-            option_name="--ntag424-master-key-hex",
-            byte_length=NtagByteLength.AES_KEY,
+        ntag424_master_key = (
+            None
+            if ntag424_master_key_hex is None
+            else parse_hex(
+                ntag424_master_key_hex,
+                option_name="--ntag424-master-key-hex",
+                byte_length=NtagByteLength.AES_KEY,
+            )
         )
         try:
             WriteNdefUrlService.call(
@@ -158,31 +162,33 @@ def _register_ntag_commands(app: typer.Typer) -> None:
         ] = None,
     ) -> None:
         """Verify an NTAG 424 DNA SDM MAC."""
-        sdm_key = cast(
-            "bytes",
-            parse_hex(
-                sdm_key_hex,
-                option_name="--sdm-key-hex",
-                byte_length=NtagByteLength.AES_KEY,
-            ),
+        sdm_key = parse_hex(
+            sdm_key_hex,
+            option_name="--sdm-key-hex",
+            byte_length=NtagByteLength.AES_KEY,
         )
-        mac = cast(
-            "bytes",
-            parse_hex(
-                mac_hex,
-                option_name="--mac",
-                byte_length=NtagByteLength.SDM_MAC,
-            ),
+        mac = parse_hex(
+            mac_hex,
+            option_name="--mac",
+            byte_length=NtagByteLength.SDM_MAC,
         )
-        uid = parse_hex(
-            uid_hex,
-            option_name="--uid",
-            byte_length=NtagByteLength.UID,
+        uid = (
+            None
+            if uid_hex is None
+            else parse_hex(
+                uid_hex,
+                option_name="--uid",
+                byte_length=NtagByteLength.UID,
+            )
         )
-        counter = parse_hex(
-            counter_hex,
-            option_name="--counter",
-            byte_length=NtagByteLength.SDM_COUNTER,
+        counter = (
+            None
+            if counter_hex is None
+            else parse_hex(
+                counter_hex,
+                option_name="--counter",
+                byte_length=NtagByteLength.SDM_COUNTER,
+            )
         )
         try:
             result = VerifyNtag424SdmMacService.call(
