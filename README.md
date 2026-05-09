@@ -136,8 +136,9 @@ schnee ntag verify-sdm-mac \
 
 If you provide `--uid` or `--counter`, those bytes must match the tag's SDM
 configuration and the mirrored URL contents. In particular, `--counter` expects
-the 3 mirrored bytes in URL order, and the verifier handles the NTAG 424 DNA
-counter byte-order conversion internally.
+3 mirrored bytes as 6 hex characters in URL order, and the mirrored `ctr=`
+value inside `--signed-text` should use that same hex representation. The
+verifier handles the NTAG 424 DNA counter byte-order conversion internally.
 
 ## Python API
 
