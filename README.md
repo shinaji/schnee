@@ -83,6 +83,62 @@ shell history, terminal logging, or process listings visible to other local
 users. Avoid using real production keys this way; prefer a safer secret input
 mechanism if one is available in your environment.
 
+Verify an NTAG 424 DNA SDM MAC from mirrored URL data:
+
+```bash
+schnee ntag verify-sdm-mac \
+  --signed-text "example.com/t?uid=044C2F82322190&ctr=250000&mac=" \
+  --mac 260d8310beb0e062 \
+  --sdm-key-hex 00112233445566778899aabbccddeeff \
+  --uid 044C2F82322190 \
+  --counter 250000
+```
+
+When the tag stored the URI record without NDEF URI compression, keep the
+default `--ndef-prefix no_prefix` and pass `--signed-text` exactly as it was
+mirrored.
+
+When the tag stored the URI record with an NDEF URI Identifier Code such as
+`https://`, pass that code through `--ndef-prefix`. The verifier removes the
+expanded prefix from `signed_text` before MAC calculation only when both of the
+following are true:
+
+- the selected `--ndef-prefix` expands to a non-empty prefix such as
+  `https://`
+- `--signed-text` starts with that expanded prefix
+
+This means `signed_text` may include the display prefix copied from the tag
+scan, or it may already be prefix-normalized. Both are accepted as long as
+`--ndef-prefix` matches the URI Identifier Code used when the URL was stored.
+
+For a tag that used compressed `https://` storage, these two commands verify
+the same signed bytes:
+
+```bash
+schnee ntag verify-sdm-mac \
+  --signed-text "https://example.com/t?uid=044C2F82322190&ctr=250000&mac=" \
+  --mac 260d8310beb0e062 \
+  --sdm-key-hex 00112233445566778899aabbccddeeff \
+  --uid 044C2F82322190 \
+  --counter 250000 \
+  --ndef-prefix https
+```
+
+```bash
+schnee ntag verify-sdm-mac \
+  --signed-text "example.com/t?uid=044C2F82322190&ctr=250000&mac=" \
+  --mac 260d8310beb0e062 \
+  --sdm-key-hex 00112233445566778899aabbccddeeff \
+  --uid 044C2F82322190 \
+  --counter 250000 \
+  --ndef-prefix https
+```
+
+If you provide `--uid` or `--counter`, those bytes must match the tag's SDM
+configuration and the mirrored URL contents. In particular, `--counter` expects
+the 3 mirrored bytes in URL order, and the verifier handles the NTAG 424 DNA
+counter byte-order conversion internally.
+
 ## Python API
 
 The stable Python entry points currently exposed by the package are the service
