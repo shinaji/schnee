@@ -679,7 +679,9 @@ class VerifyNtag424SdmMacService(Service[VerifyNtag424SdmMacResult]):
             default=None,
             min_length=NtagByteLength.SDM_COUNTER,
             max_length=NtagByteLength.SDM_COUNTER,
-            description="Optional 3-byte SDM read counter bytes",
+            description=(
+                "Optional 3-byte mirrored SDM read counter bytes in URL order."
+            ),
         )
         ndef_prefix: NdefUriPrefix = Field(
             default=NdefUriPrefix.NO_PREFIX,

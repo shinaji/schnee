@@ -61,12 +61,16 @@ def calculate_sdm_mac(
     uid: bytes | None = None,
     counter: bytes | None = None,
 ) -> bytes:
-    """Calculate the truncated 8-byte SDM MAC for NTAG 424 DNA."""
+    """Calculate the truncated 8-byte SDM MAC for NTAG 424 DNA.
+
+    The optional read counter is expected in mirrored URL order and is converted
+    internally to the little-endian byte order used in SV2.
+    """
     sv2 = SDM_SV2_PREFIX
     if uid is not None:
         sv2 += uid
     if counter is not None:
-        sv2 += counter
+        sv2 += counter[::-1]
 
     session_key_cmac = CMAC.new(key=sdm_key, ciphermod=AES)
     session_key_cmac.update(sv2)

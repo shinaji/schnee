@@ -776,17 +776,11 @@ def verify_sdm_mac(
     ctr_bytes = binascii.unhexlify(ctr_hex)
     key_bytes = binascii.unhexlify(master_key_hex)
 
-    # NTAG 424 DNAのカウンターはリトルエンディアンで扱われることが一般的ですが、
-    # URLにミラーされる際はASCII Hexなので、そのままの並びでSVに使用される場合と
-    # 逆順(Little Endian)にする場合があります。
-    # 通常のSDM実装では「Little Endian」として扱う必要があります。
-    ctr_bytes_le = ctr_bytes[::-1]
-
     calculated_mac = calculate_sdm_mac(
         sdm_key=key_bytes,
         signed_data=b"",
         uid=uid_bytes,
-        counter=ctr_bytes_le,
+        counter=ctr_bytes,
     )
 
     print(f"Calculated MAC: {calculated_mac.hex().upper()}")

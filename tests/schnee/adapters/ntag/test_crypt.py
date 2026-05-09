@@ -9,13 +9,13 @@ TRUNCATED_SDM_MAC_LENGTH = 8
 
 
 def test_calculate_sdm_mac_with_uid_and_counter() -> None:
-    """SDM MAC includes the UID and counter in SV2 when both are present."""
+    """SDM MAC includes the mirrored counter after converting it to little-endian."""
     assert (
         calculate_sdm_mac(
             sdm_key=bytes.fromhex("00112233445566778899AABBCCDDEEFF"),
             signed_data=bytes.fromhex("DEADBEEF00"),
             uid=bytes.fromhex("04782E21801D80"),
-            counter=bytes.fromhex("010203"),
+            counter=bytes.fromhex("030201"),
         ).hex()
         == "7db100f509613111"
     )
@@ -49,10 +49,10 @@ def test_calculate_sdm_mac_truncates_to_odd_indexed_bytes() -> None:
     sdm_key = bytes.fromhex("00112233445566778899AABBCCDDEEFF")
     signed_data = bytes.fromhex("DEADBEEF00")
     uid = bytes.fromhex("04782E21801D80")
-    counter = bytes.fromhex("010203")
+    mirrored_counter = bytes.fromhex("030201")
 
     session_key_cmac = CMAC.new(key=sdm_key, ciphermod=AES)
-    session_key_cmac.update(SDM_SV2_PREFIX + uid + counter)
+    session_key_cmac.update(SDM_SV2_PREFIX + uid + mirrored_counter[::-1])
     session_mac_key = session_key_cmac.digest()
 
     full_mac_cmac = CMAC.new(key=session_mac_key, ciphermod=AES)
@@ -64,7 +64,7 @@ def test_calculate_sdm_mac_truncates_to_odd_indexed_bytes() -> None:
             sdm_key=sdm_key,
             signed_data=signed_data,
             uid=uid,
-            counter=counter,
+            counter=mirrored_counter,
         )
         == full_mac[1::2]
     )

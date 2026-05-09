@@ -450,6 +450,31 @@ def test_verify_ntag424_sdm_mac_service_handles_optional_uid_and_counter() -> No
     assert counter_only_result.valid is True
 
 
+def test_verify_sdm_mac_normalizes_mirrored_counter_to_little_endian() -> None:
+    """Mirrored counter bytes are reversed before SDM MAC calculation."""
+    signed_text = "https://example.com/t?uid=04427B82322190&ctr=00001D&mac="
+    uid = bytes.fromhex("04427B82322190")
+    mirrored_counter = bytes.fromhex("00001D")
+    expected_mac = bytes.fromhex("766D40494FCEF064")
+
+    result = VerifyNtag424SdmMacService.call(
+        VerifyNtag424SdmMacService.Request(
+            sdm_key=bytes(16),
+            signed_text=signed_text,
+            mac=expected_mac,
+            uid=uid,
+            counter=mirrored_counter,
+        )
+    )
+
+    assert result.valid is True, (
+        "verify-sdm-mac should reverse mirrored counter bytes to little-endian"
+    )
+    assert result.calculated_mac == expected_mac, (
+        "verify-sdm-mac should match known NTAG 424 DNA SDM MAC output"
+    )
+
+
 @pytest.mark.parametrize(
     ("payload", "match"),
     [
