@@ -7,3 +7,4 @@ from .backend import (
     ListBackendNamesServiceError,
 )
 from .base import ServiceError
+from .ntag_profile import VerifyNtag424SdmMacResult, VerifyNtag424SdmMacService

@@ -9,10 +9,10 @@ from schnee.controllers.cli.output import echo_json, echo_text
 from schnee.services.backend import ListBackendNamesService
 from schnee.services.base import ServiceError
 from schnee.services.ntag_profile import (
-    AES_KEY_SIZE,
     ReadNtagProfileService,
     WriteNdefUrlService,
 )
+from schnee.utils.ntag.constants import NtagByteLength
 
 
 def _parse_optional_hex(value: str | None, *, option_name: str) -> bytes | None:
@@ -24,7 +24,7 @@ def _parse_optional_hex(value: str | None, *, option_name: str) -> bytes | None:
     except ValueError as exc:
         msg = "must be valid hexadecimal"
         raise typer.BadParameter(msg, param_hint=option_name) from exc
-    if len(parsed) != AES_KEY_SIZE:
+    if len(parsed) != NtagByteLength.AES_KEY:
         msg = "must be 32 hex characters that decode to 16 bytes"
         raise typer.BadParameter(
             msg,

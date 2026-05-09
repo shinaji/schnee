@@ -3,20 +3,21 @@
 from __future__ import annotations
 
 import sys
-from typing import ClassVar, Self
+from typing import ClassVar, NamedTuple, Self
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from smartcard.Exceptions import CardConnectionException
 
 from schnee.adapters.backend import PcscBackend
 from schnee.adapters.backend.core import Backend
 from schnee.adapters.backend.pcsc import PcscApduClient, PcscReaderProvider
 from schnee.adapters.ntag.core import Ntag424, Ntag424Key, Session
+from schnee.adapters.ntag.crypt import calculate_sdm_mac
 from schnee.adapters.ntag.profile import NtagProfile
 from schnee.adapters.ntag.utils import PlaceholderNotFoundError
+from schnee.ndef import NdefUriPrefix
 from schnee.services.base import Service, ServiceError
-
-AES_KEY_SIZE = 16
+from schnee.utils.ntag.constants import NtagByteLength
 
 
 class ReadNtagProfileServiceError(ServiceError):
@@ -253,6 +254,23 @@ class SetNtag424SdmUrlTemplateError(SetNtag424SdmServiceError):
     msg: ClassVar[str] = "Set NTAG 424 SDM URL template is invalid"
 
 
+class VerifyNtag424SdmMacResult(BaseModel):
+    """Service-level result for NTAG 424 DNA SDM MAC verification."""
+
+    model_config = ConfigDict(frozen=True)
+
+    valid: bool = Field(
+        description="Whether the provided MAC matches the calculated one"
+    )
+    calculated_mac: bytes = Field(description="Calculated truncated 8-byte SDM MAC")
+    ndef_prefix: NdefUriPrefix = Field(
+        description="NDEF URI prefix used for signed_text normalization"
+    )
+    prefix_removed: bool = Field(
+        description="Whether the selected NDEF prefix was removed from signed_text"
+    )
+
+
 class ReadNtagProfileService(Service[NtagProfile]):
     """Read the current profile from an NTAG profile backend."""
 
@@ -298,8 +316,8 @@ class WriteNdefUrlService(Service[None]):
         url: str = Field(description="URL to write as a single NDEF URI record.")
         ntag424_master_key: bytes | None = Field(
             default=None,
-            min_length=AES_KEY_SIZE,
-            max_length=AES_KEY_SIZE,
+            min_length=NtagByteLength.AES_KEY,
+            max_length=NtagByteLength.AES_KEY,
             description=(
                 "Current NTAG 424 DNA application master key. Provide this when "
                 "the NTAG 424 NDEF file requires authenticated writes."
@@ -364,10 +382,10 @@ class Ntag424KeyUpdateRequest(Service.Request):
     @model_validator(mode="after")
     def validate_update(self) -> Self:
         """Validate NTAG 424 ChangeKey constraints."""
-        if len(self.new_key) != AES_KEY_SIZE:
+        if len(self.new_key) != NtagByteLength.AES_KEY:
             msg = "new_key must be 16 bytes"
             raise self.InvalidKeyLengthError(msg)
-        if self.old_key is not None and len(self.old_key) != AES_KEY_SIZE:
+        if self.old_key is not None and len(self.old_key) != NtagByteLength.AES_KEY:
             msg = "old_key must be 16 bytes"
             raise self.InvalidKeyLengthError(msg)
         if self.key_no is not Ntag424Key.APP_MASTER and self.old_key is None:
@@ -397,7 +415,7 @@ class Ntag424KeyValidationRequest(Service.Request):
     @model_validator(mode="after")
     def validate_key(self) -> Self:
         """Validate NTAG 424 key validation constraints."""
-        if len(self.key) != AES_KEY_SIZE:
+        if len(self.key) != NtagByteLength.AES_KEY:
             msg = "key must be 16 bytes"
             raise self.InvalidKeyLengthError(msg)
         return self
@@ -417,8 +435,8 @@ class UpdateNtag424KeysService(Service[None]):
             description="Backend name, for example `pcsc` or `pcsc:<reader name>`.",
         )
         master_key: bytes = Field(
-            min_length=AES_KEY_SIZE,
-            max_length=AES_KEY_SIZE,
+            min_length=NtagByteLength.AES_KEY,
+            max_length=NtagByteLength.AES_KEY,
             description="Current application master key",
         )
         updates: list[Ntag424KeyUpdateRequest] = Field(
@@ -437,7 +455,7 @@ class UpdateNtag424KeysService(Service[None]):
         @model_validator(mode="after")
         def validate_request(self) -> Self:
             """Validate service request constraints."""
-            if len(self.master_key) != AES_KEY_SIZE:
+            if len(self.master_key) != NtagByteLength.AES_KEY:
                 msg = "master_key must be 16 bytes"
                 raise self.InvalidMasterKeyLengthError(msg)
 
@@ -555,8 +573,8 @@ class SetNtag424SdmService(Service[None]):
             description="Backend name, for example `pcsc` or `pcsc:<reader name>`.",
         )
         master_key: bytes = Field(
-            min_length=AES_KEY_SIZE,
-            max_length=AES_KEY_SIZE,
+            min_length=NtagByteLength.AES_KEY,
+            max_length=NtagByteLength.AES_KEY,
             description="Current application master key",
         )
         enabled: bool = Field(description="Whether SDM should be enabled")
@@ -622,6 +640,81 @@ class SetNtag424SdmService(Service[None]):
             raise SetNtag424SdmSessionError from exc
         except PlaceholderNotFoundError as exc:
             raise SetNtag424SdmUrlTemplateError from exc
+
+
+class VerifyNtag424SdmMacService(Service[VerifyNtag424SdmMacResult]):
+    """Verify an NTAG 424 DNA SDM MAC through the service layer."""
+
+    class _NormalizedSignedText(NamedTuple):
+        value: str
+        prefix_removed: bool
+
+    class Request(Service.Request):
+        """Request for NTAG 424 DNA SDM MAC verification."""
+
+        sdm_key: bytes = Field(
+            min_length=NtagByteLength.AES_KEY,
+            max_length=NtagByteLength.AES_KEY,
+            description="16-byte SDM file read key",
+        )
+        signed_text: str = Field(
+            description=(
+                "Signed text from the mirrored URL, with or without the selected "
+                "NDEF URI prefix."
+            )
+        )
+        mac: bytes = Field(
+            min_length=NtagByteLength.SDM_MAC,
+            max_length=NtagByteLength.SDM_MAC,
+            description="8-byte SDM MAC to verify",
+        )
+        uid: bytes | None = Field(
+            default=None,
+            min_length=NtagByteLength.UID,
+            max_length=NtagByteLength.UID,
+            description="Optional 7-byte UID",
+        )
+        counter: bytes | None = Field(
+            default=None,
+            min_length=NtagByteLength.SDM_COUNTER,
+            max_length=NtagByteLength.SDM_COUNTER,
+            description="Optional 3-byte SDM read counter bytes",
+        )
+        ndef_prefix: NdefUriPrefix = Field(
+            default=NdefUriPrefix.NO_PREFIX,
+            description="NDEF URI prefix used when the tag encoded the URI record",
+        )
+
+    req: Request
+
+    def process(self) -> VerifyNtag424SdmMacResult:
+        """Verify the provided SDM MAC."""
+        normalized_text = self._normalize_signed_text()
+        calculated_mac = calculate_sdm_mac(
+            sdm_key=self.req.sdm_key,
+            signed_data=normalized_text.value.encode(),
+            uid=self.req.uid,
+            counter=self.req.counter,
+        )
+        return VerifyNtag424SdmMacResult(
+            valid=calculated_mac == self.req.mac,
+            calculated_mac=calculated_mac,
+            ndef_prefix=self.req.ndef_prefix,
+            prefix_removed=normalized_text.prefix_removed,
+        )
+
+    def _normalize_signed_text(self) -> _NormalizedSignedText:
+        """Remove the selected NDEF URI prefix when present."""
+        prefix = self.req.ndef_prefix.expanded_text
+        if prefix and self.req.signed_text.startswith(prefix):
+            return self._NormalizedSignedText(
+                value=self.req.signed_text.removeprefix(prefix),
+                prefix_removed=True,
+            )
+        return self._NormalizedSignedText(
+            value=self.req.signed_text,
+            prefix_removed=False,
+        )
 
 
 def main() -> int:

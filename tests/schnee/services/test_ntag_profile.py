@@ -1,12 +1,16 @@
 """Tests for NTAG profile services."""
 
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
 from schnee.adapters.backend import PcscBackend
 from schnee.adapters.ntag.apdu import CommandAPDU, ResponseAPDU
 from schnee.adapters.ntag.core import Ntag424Key, Session
+from schnee.adapters.ntag.crypt import calculate_sdm_mac
 from schnee.adapters.ntag.profile.models import Ntag21xProfile, TagInfo
+from schnee.ndef import NdefUriPrefix
 from schnee.services.ntag_profile import (
     Ntag424KeyUpdateRequest,
     Ntag424KeyValidationRequest,
@@ -15,6 +19,7 @@ from schnee.services.ntag_profile import (
     SetNtag424SdmService,
     UpdateNtag424KeysService,
     ValidateNtag424KeysService,
+    VerifyNtag424SdmMacService,
     WriteNdefUrlBackendError,
     WriteNdefUrlService,
 )
@@ -23,6 +28,10 @@ GET_KEY_VERSION_INS = 0x64
 EXPECTED_KEY_VERSION = 0x11
 MISMATCHED_KEY_VERSION = 0x02
 NTAG215_NDEF_CAPACITY_BYTES = 496
+SDM_KEY = bytes.fromhex("00112233445566778899AABBCCDDEEFF")
+SDM_UID = bytes.fromhex("044C2F82322190")
+SDM_COUNTER = bytes.fromhex("250000")
+SIGNED_TEXT = "example.com/t?uid=044C2F82322190&ctr=250000"
 
 
 class FakeApduClient:
@@ -358,6 +367,130 @@ def test_set_ntag424_sdm_service_defaults_command_counter_to_zero(
     )
 
     assert calls == [0]
+
+
+def test_verify_ntag424_sdm_mac_service_removes_selected_ndef_prefix() -> None:
+    """Signed text is normalized by removing the selected NDEF URI prefix."""
+    expected_mac = calculate_sdm_mac(
+        sdm_key=SDM_KEY,
+        signed_data=SIGNED_TEXT.encode(),
+        uid=SDM_UID,
+        counter=SDM_COUNTER,
+    )
+
+    result = VerifyNtag424SdmMacService.call(
+        VerifyNtag424SdmMacService.Request(
+            sdm_key=SDM_KEY,
+            signed_text=f"https://{SIGNED_TEXT}",
+            mac=expected_mac,
+            uid=SDM_UID,
+            counter=SDM_COUNTER,
+            ndef_prefix=NdefUriPrefix.HTTPS,
+        )
+    )
+
+    assert result.valid is True
+    assert result.calculated_mac == expected_mac
+    assert result.ndef_prefix is NdefUriPrefix.HTTPS
+    assert result.prefix_removed is True
+
+
+def test_verify_ntag424_sdm_mac_service_accepts_already_normalized_text() -> None:
+    """Signed text stays unchanged when the prefix is already absent."""
+    expected_mac = calculate_sdm_mac(
+        sdm_key=SDM_KEY,
+        signed_data=SIGNED_TEXT.encode(),
+    )
+
+    result = VerifyNtag424SdmMacService.call(
+        VerifyNtag424SdmMacService.Request(
+            sdm_key=SDM_KEY,
+            signed_text=SIGNED_TEXT,
+            mac=expected_mac,
+            ndef_prefix=NdefUriPrefix.HTTPS,
+        )
+    )
+
+    assert result.valid is True
+    assert result.calculated_mac == expected_mac
+    assert result.prefix_removed is False
+
+
+def test_verify_ntag424_sdm_mac_service_handles_optional_uid_and_counter() -> None:
+    """UID and counter are optional inputs to the SDM MAC calculation."""
+    uid_only_mac = calculate_sdm_mac(
+        sdm_key=SDM_KEY,
+        signed_data=SIGNED_TEXT.encode(),
+        uid=SDM_UID,
+    )
+    counter_only_mac = calculate_sdm_mac(
+        sdm_key=SDM_KEY,
+        signed_data=SIGNED_TEXT.encode(),
+        counter=SDM_COUNTER,
+    )
+
+    uid_only_result = VerifyNtag424SdmMacService.call(
+        VerifyNtag424SdmMacService.Request(
+            sdm_key=SDM_KEY,
+            signed_text=SIGNED_TEXT,
+            mac=uid_only_mac,
+            uid=SDM_UID,
+        )
+    )
+    counter_only_result = VerifyNtag424SdmMacService.call(
+        VerifyNtag424SdmMacService.Request(
+            sdm_key=SDM_KEY,
+            signed_text=SIGNED_TEXT,
+            mac=counter_only_mac,
+            counter=SDM_COUNTER,
+        )
+    )
+
+    assert uid_only_result.valid is True
+    assert counter_only_result.valid is True
+
+
+@pytest.mark.parametrize(
+    ("payload", "match"),
+    [
+        ({"sdm_key": b"short", "signed_text": SIGNED_TEXT, "mac": bytes(8)}, "sdm_key"),
+        ({"sdm_key": SDM_KEY, "signed_text": SIGNED_TEXT, "mac": b"short"}, "mac"),
+        (
+            {
+                "sdm_key": SDM_KEY,
+                "signed_text": SIGNED_TEXT,
+                "mac": bytes(8),
+                "uid": b"short",
+            },
+            "uid",
+        ),
+        (
+            {
+                "sdm_key": SDM_KEY,
+                "signed_text": SIGNED_TEXT,
+                "mac": bytes(8),
+                "counter": b"no",
+            },
+            "counter",
+        ),
+        (
+            {
+                "sdm_key": SDM_KEY,
+                "signed_text": SIGNED_TEXT,
+                "mac": bytes(8),
+                "ndef_prefix": "not-a-prefix",
+            },
+            "ndef_prefix",
+        ),
+    ],
+)
+def test_verify_ntag424_sdm_mac_service_request_validates_inputs(
+    payload: dict[str, Any],
+    match: str,
+) -> None:
+    """Invalid service inputs are rejected before MAC calculation."""
+    with pytest.raises(ValidationError, match=match):
+        VerifyNtag424SdmMacService.Request(**payload)
 
 
 def test_validate_ntag424_keys_service_authenticates_expected_key(
