@@ -2,6 +2,8 @@ from Crypto.Cipher import AES
 from Crypto.Hash import CMAC
 from Crypto.Util.Padding import pad
 
+SDM_SV2_PREFIX = bytes.fromhex("3CC300010080")
+
 
 def aes_encrypt(key: bytes, data: bytes, iv: bytes | None = None) -> bytes:
     """AES-128 CBC encryption"""
@@ -51,6 +53,28 @@ def calculate_ev2_mac(  # noqa: PLR0913
 
     # For EV2, use the first 8 bytes
     return bytes(list(full_mac)[1::2])
+
+
+def calculate_sdm_mac(
+    sdm_key: bytes,
+    signed_data: bytes,
+    uid: bytes | None = None,
+    counter: bytes | None = None,
+) -> bytes:
+    """Calculate the truncated 8-byte SDM MAC for NTAG 424 DNA."""
+    sv2 = SDM_SV2_PREFIX
+    if uid is not None:
+        sv2 += uid
+    if counter is not None:
+        sv2 += counter
+
+    session_key_cmac = CMAC.new(key=sdm_key, ciphermod=AES)
+    session_key_cmac.update(sv2)
+    session_mac_key = session_key_cmac.digest()
+
+    sdm_mac_cmac = CMAC.new(key=session_mac_key, ciphermod=AES)
+    sdm_mac_cmac.update(signed_data)
+    return sdm_mac_cmac.digest()[1::2]
 
 
 def aes_cbc_encrypt_for_ev2(

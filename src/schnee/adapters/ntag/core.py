@@ -13,7 +13,12 @@ from smartcard.util import toHexString
 from schnee.adapters.backend.core import Backend
 from schnee.adapters.backend.pcsc import PcscApduClient, PcscBackend
 from schnee.adapters.ntag.apdu import Ntag424ApduPreset
-from schnee.adapters.ntag.crypt import aes_decrypt, aes_encrypt, xor_bytes
+from schnee.adapters.ntag.crypt import (
+    aes_decrypt,
+    aes_encrypt,
+    calculate_sdm_mac,
+    xor_bytes,
+)
 from schnee.adapters.ntag.utils import (
     Offset,
     build_ndef_url_file_data,
@@ -777,27 +782,12 @@ def verify_sdm_mac(
     # 通常のSDM実装では「Little Endian」として扱う必要があります。
     ctr_bytes_le = ctr_bytes[::-1]
 
-    # 2. セッション鍵生成用のSystem Vector (SV) の作成
-    # SV = 3C C3 00 01 00 80 + UID(7bytes) + Counter(3bytes, Little Endian)
-    # "3C C3 00 01 00 80" は NXP AN12196 で定義される定数(File 2の場合)
-    sv_prefix = binascii.unhexlify("3CC300010080")
-    sv_bytes = sv_prefix + uid_bytes + ctr_bytes_le
-
-    c_ses = CMAC.new(key_bytes, ciphermod=AES)
-    c_ses.update(sv_bytes)
-    session_key = c_ses.digest()
-
-    # 4. SDM-MAC の計算
-    # 入力データは「空 (empty)」またはミラーされたデータそのもの。
-    # 標準的なSDM設定(File Dataの暗号化なし)では、MACは空入力に対して計算されます。
-    c_mac = CMAC.new(session_key, ciphermod=AES)
-    c_mac.update(b"")  # 空データ
-    full_mac = c_mac.digest()
-
-    # 5. トランケーション (短縮)
-    # フルCMAC(16バイト)から、奇数インデックス(1, 3, 5...)のバイトを抽出して8バイトにします。  # noqa: E501
-    # (仕様書では "Even bytes" と書かれることがありますが、実装上は [1::2] が正解となるケースが大半です)  # noqa: E501
-    calculated_mac = full_mac[1::2]
+    calculated_mac = calculate_sdm_mac(
+        sdm_key=key_bytes,
+        signed_data=b"",
+        uid=uid_bytes,
+        counter=ctr_bytes_le,
+    )
 
     print(f"Calculated MAC: {calculated_mac.hex().upper()}")
     print(f"Received MAC:   {mac_hex.upper()}")
