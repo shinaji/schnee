@@ -1,46 +1,36 @@
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 
 from schnee.controllers.cli.errors import exit_for_service_error
 from schnee.controllers.cli.output import echo_json, echo_text
+from schnee.controllers.cli.parsing import parse_hex
+from schnee.ndef import NdefUriPrefix
 from schnee.services.backend import ListBackendNamesService
 from schnee.services.base import ServiceError
 from schnee.services.ntag_profile import (
     ReadNtagProfileService,
+    VerifyNtag424SdmMacService,
     WriteNdefUrlService,
 )
 from schnee.utils.ntag.constants import NtagByteLength
 
 
-def _parse_optional_hex(value: str | None, *, option_name: str) -> bytes | None:
-    """Convert an optional CLI hex value to bytes."""
-    if value is None:
-        return None
-    try:
-        parsed = bytes.fromhex(value)
-    except ValueError as exc:
-        msg = "must be valid hexadecimal"
-        raise typer.BadParameter(msg, param_hint=option_name) from exc
-    if len(parsed) != NtagByteLength.AES_KEY:
-        msg = "must be 32 hex characters that decode to 16 bytes"
-        raise typer.BadParameter(
-            msg,
-            param_hint=option_name,
-        )
-    return parsed
-
-
 def register_commands(app: typer.Typer) -> None:
     """Register CLI commands."""
-    ntag_app = typer.Typer(help="NTAG profile commands.", no_args_is_help=True)
-    app.add_typer(ntag_app, name="ntag")
 
     @app.callback(invoke_without_command=True)
     def root() -> None:
         """NFC/RFID tag authentication and encryption tools."""
+
+    _register_root_commands(app)
+    _register_ntag_commands(app)
+
+
+def _register_root_commands(app: typer.Typer) -> None:
+    """Register root-level CLI commands."""
 
     @app.command("backends")
     def backends() -> None:
@@ -52,6 +42,12 @@ def register_commands(app: typer.Typer) -> None:
 
         for name in names:
             echo_text(name)
+
+
+def _register_ntag_commands(app: typer.Typer) -> None:
+    """Register NTAG CLI commands."""
+    ntag_app = typer.Typer(help="NTAG profile commands.", no_args_is_help=True)
+    app.add_typer(ntag_app, name="ntag")
 
     @ntag_app.command("read")
     def read_ntag_profile(
@@ -100,9 +96,10 @@ def register_commands(app: typer.Typer) -> None:
         ] = None,
     ) -> None:
         """Write a URL NDEF record."""
-        ntag424_master_key = _parse_optional_hex(
+        ntag424_master_key = parse_hex(
             ntag424_master_key_hex,
             option_name="--ntag424-master-key-hex",
+            byte_length=NtagByteLength.AES_KEY,
         )
         try:
             WriteNdefUrlService.call(
@@ -114,3 +111,98 @@ def register_commands(app: typer.Typer) -> None:
             )
         except ServiceError as exc:
             exit_for_service_error(exc)
+
+    @ntag_app.command("verify-sdm-mac")
+    def verify_sdm_mac(  # noqa: PLR0913
+        signed_text: Annotated[
+            str,
+            typer.Option(
+                "--signed-text",
+                help="Signed text from the mirrored URL.",
+            ),
+        ],
+        mac_hex: Annotated[
+            str,
+            typer.Option(
+                "--mac",
+                help="Observed 8-byte SDM MAC as 16 hex characters.",
+            ),
+        ],
+        sdm_key_hex: Annotated[
+            str,
+            typer.Option(
+                "--sdm-key-hex",
+                help="SDM file read key as 32 hex characters.",
+            ),
+        ],
+        ndef_prefix: Annotated[
+            NdefUriPrefix,
+            typer.Option(
+                "--ndef-prefix",
+                help="NDEF URI prefix token, for example no_prefix or https.",
+            ),
+        ] = NdefUriPrefix.NO_PREFIX,
+        uid_hex: Annotated[
+            str | None,
+            typer.Option(
+                "--uid",
+                help="Optional 7-byte mirrored UID as 14 hex characters.",
+            ),
+        ] = None,
+        counter_hex: Annotated[
+            str | None,
+            typer.Option(
+                "--counter",
+                help="Optional 3-byte mirrored read counter as 6 hex characters.",
+            ),
+        ] = None,
+    ) -> None:
+        """Verify an NTAG 424 DNA SDM MAC."""
+        sdm_key = cast(
+            "bytes",
+            parse_hex(
+                sdm_key_hex,
+                option_name="--sdm-key-hex",
+                byte_length=NtagByteLength.AES_KEY,
+            ),
+        )
+        mac = cast(
+            "bytes",
+            parse_hex(
+                mac_hex,
+                option_name="--mac",
+                byte_length=NtagByteLength.SDM_MAC,
+            ),
+        )
+        uid = parse_hex(
+            uid_hex,
+            option_name="--uid",
+            byte_length=NtagByteLength.UID,
+        )
+        counter = parse_hex(
+            counter_hex,
+            option_name="--counter",
+            byte_length=NtagByteLength.SDM_COUNTER,
+        )
+        try:
+            result = VerifyNtag424SdmMacService.call(
+                VerifyNtag424SdmMacService.Request(
+                    signed_text=signed_text,
+                    mac=mac,
+                    sdm_key=sdm_key,
+                    uid=uid,
+                    counter=counter,
+                    ndef_prefix=ndef_prefix,
+                ),
+            )
+        except ServiceError as exc:
+            exit_for_service_error(exc)
+
+        echo_json(
+            {
+                "valid": result.valid,
+                "calculated_mac": result.calculated_mac.hex(),
+                "ndef_prefix": result.ndef_prefix.value,
+                "prefix_removed": result.prefix_removed,
+            }
+        )
